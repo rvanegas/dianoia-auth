@@ -33,7 +33,8 @@ dianoia-auth --port 8002                # serve, after pip install -e .
 - **`names.py`**: the register of names across applications: one name per address, reserved by an application (The Floor) before its person signs in here. An account's name and address are fixed but for the operator's `scripts/rename_user.py`.
 - **`store.py`**: one SQLite file, `$AUTH_DATA_DIR/auth.db` (mode 600): accounts, reservations, held names, sends, clients, refresh tokens (by hash).
 - **`mail.py`**: codes by SES SMTP (`AUTH_SMTP_*`; `AUTH_MAIL_LOG=1` prints them, for a local server).
-- **`scripts/`**: the operator's. `add_client.py` (scopes, `--credentials`, `--keeps-names`, `--public`), `accounts.py` (list, link, hold, disable), `rename_user.py`, `migrate_from_noesis.py` (once, at the cut-over).
+- **App Review's address** (`provider.review_code`): `AUTH_REVIEW_ADDRESS` with `AUTH_REVIEW_CODE` signs in with that fixed code, nothing mailed or counted; the code is published in The Floor's review notes, so the account holds demo data alone.
+- **`scripts/`**: the operator's. `add_client.py` (scopes, `--credentials`, `--keeps-names`, `--public`; a new secret each time), `client_scopes.py` (the scopes alone, the secret kept), `accounts.py` (list, link, hold, disable), `rename_user.py`, `migrate_from_noesis.py` (once, at the cut-over).
 
 What stays with each application: noesis keeps plans, allowances, spend and speaker names, its minted tokens and its library-confined tokens; The Floor its own accounts' settings.
 

@@ -104,6 +104,22 @@ def what_it_asks(scopes: list[str]) -> str:
     return "to know who you are: your user name and email address"
 
 
+def review_code(address: str) -> str | None:
+    """The fixed code of App Review's address (AUTH_REVIEW_ADDRESS, AUTH_REVIEW_CODE),
+    which reviewers sign in with at every submission; None for any other address.
+
+    The code is published in the review notes, so whoever reads them can sign
+    in as that account: it holds demo data alone (The Floor's
+    planning/DEMO-ACCOUNT.md). Both settings, or neither.
+    """
+    import os
+    wanted = accounts.normalize_email(os.environ.get("AUTH_REVIEW_ADDRESS", ""))
+    code = os.environ.get("AUTH_REVIEW_CODE", "").strip()
+    if not wanted or len(code) != CODE_DIGITS or not code.isdigit():
+        return None
+    return code if address == wanted else None
+
+
 @dataclass
 class SignIn:
     client: OAuthClientInformationFull
@@ -204,13 +220,19 @@ class AuthProvider:
         address = accounts.normalize_email(email)
         if address is None:
             return "That is not an email address."
-        if not accounts.allow_send(address, ip):
-            return "Too many codes were asked for; try again in an hour."
-        code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
-        try:
-            mail.send_code(address, code, sign_in.client.client_name or "An application")
-        except mail.MailUnavailable:
-            return "The code could not be sent; try again later."
+        review = review_code(address)
+        if review is not None:
+            # App Review's address: its code is fixed and published in the
+            # review notes, so nothing is mailed and nothing is counted.
+            code = review
+        else:
+            if not accounts.allow_send(address, ip):
+                return "Too many codes were asked for; try again in an hour."
+            code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
+            try:
+                mail.send_code(address, code, sign_in.client.client_name or "An application")
+            except mail.MailUnavailable:
+                return "The code could not be sent; try again later."
         sign_in.email, sign_in.code_sha, sign_in.attempts = address, sha(code), 0
         sign_in.expires_at = time.time() + SIGN_IN_TTL
         return None

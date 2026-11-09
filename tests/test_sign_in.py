@@ -165,3 +165,42 @@ def test_keys_rotate_without_cutting_off_tokens_out(data):
     tokens._load.cache_clear()
     assert tokens.verify(old) is None and tokens.verify(new) is not None
     assert (data / "signing-key.pem").stat().st_mode & 0o777 == 0o600
+
+
+def test_app_review_signs_in_with_its_fixed_code(live, monkeypatch):
+    url = live
+    monkeypatch.setenv("AUTH_REVIEW_ADDRESS", "Review@Example.com")
+    monkeypatch.setenv("AUTH_REVIEW_CODE", "424242")
+    mailed = []
+    monkeypatch.setattr("dianoia_auth.mail.send_code", lambda to, code, name: mailed.append(to))
+    client = register(url).json()
+    _, challenge = pkce()
+    request_id = authorize(url, client["client_id"], challenge)
+    httpx.post(f"{url}/login", data={"request": request_id, "email": "review@example.com", "action": "send"})
+    back = httpx.post(f"{url}/login", data={"request": request_id, "code": "424242", "action": "verify"})
+    assert back.status_code == 302 and mailed == []
+    # Anybody else is mailed a code of their own, and the fixed one is nothing to them.
+    request_id = authorize(url, client["client_id"], challenge)
+    httpx.post(f"{url}/login", data={"request": request_id, "email": "ann@example.com", "action": "send"})
+    assert mailed == ["ann@example.com"]
+    assert "not the code" in httpx.post(f"{url}/login", data={
+        "request": request_id, "code": "424242", "action": "verify"}).text
+    # A code that is not six digits is no code.
+    monkeypatch.setenv("AUTH_REVIEW_CODE", "42")
+    from dianoia_auth.provider import review_code
+    assert review_code("review@example.com") is None
+
+
+def test_the_operator_widens_a_clients_scopes_and_keeps_its_secret(data):
+    from conftest import script
+    from dianoia_auth.provider import provider
+    floor = add_client("thefloor", "--name", "The Floor", "--redirect", "https://floor.example/callback",
+                       "--scope", "noesis:read noesis:import", "--credentials", "noesis:keep", "--keeps-names")
+    script("client_scopes").main(["thefloor", "--scope", "identity noesis:read noesis:import",
+                                  "--credentials", "noesis:keep"])
+    client = provider.client("thefloor")
+    assert client.client_secret == floor["AUTH_CLIENT_SECRET"]
+    assert client.scope == "identity noesis:read noesis:import noesis:keep"
+    assert "client_credentials" in client.grant_types and provider.keeps_names("thefloor", floor["AUTH_CLIENT_SECRET"])
+    with pytest.raises(SystemExit):
+        script("client_scopes").main(["thefloor", "--scope", "everything"])
