@@ -27,3 +27,7 @@ Read this before changing one, rotating one, or adding one.
   `NOESIS_AUTH_CLIENT_SECRET`, claude.ai's own): kept in the clear, since the
   SDK compares them. A copy of `auth.db` lets somebody pose as any registered
   client; refresh tokens there are hashes and reach nothing.
+- **Sessions** — the `__Host-session` cookie in each signed-in browser, kept
+  in `auth.db` as a hash. A stolen cookie signs its thief in to every client,
+  as that person, until it lapses (thirty days from last use) or the person
+  signs out of it on `/account`; disabling the account ends it at once.

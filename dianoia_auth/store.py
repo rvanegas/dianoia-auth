@@ -10,6 +10,10 @@
 - **clients**: each OAuth client, as the SDK describes it, with the scopes the
   operator allows it (provider.py).
 - **refresh**: refresh tokens, by the SHA-256 of the token alone.
+- **sessions**: a browser signed in here (sessions.py), by the SHA-256 of
+  its cookie, which lets every client's sign-in skip the code.
+- **consents**: what a person has let each client have, so a client is asked
+  about once per scope, not at every sign-in.
 
 Codes and pending sign-ins live minutes, in memory (provider.py); access
 tokens are signed, not stored (tokens.py).
@@ -53,6 +57,22 @@ CREATE TABLE IF NOT EXISTS refresh (
     expires_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS refresh_user ON refresh (user);
+CREATE TABLE IF NOT EXISTS sessions (
+    sha TEXT PRIMARY KEY,
+    user TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    seen_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user);
+CREATE TABLE IF NOT EXISTS consents (
+    user TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    granted_at REAL NOT NULL,
+    PRIMARY KEY (user, client_id)
+);
 """
 
 

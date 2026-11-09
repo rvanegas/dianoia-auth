@@ -8,7 +8,12 @@
   application's own token), which the SDK does not.
 - `/.well-known/jwks.json`: the keys access tokens are signed with
   (tokens.py), for resource servers to check them by.
-- `/login`: the sign-in, by emailed code, that /authorize sends people to.
+- `/login`: the sign-in that /authorize sends people to: by emailed code,
+  or, with a session here (sessions.py), at once, asking only a client's
+  first time what it may have. `prompt=login|consent|none` is honoured.
+- `/logout`: ends this browser's session, back to a client's own origin.
+- `/account`: the person's own page: the apps they let in (each removable),
+  where they are signed in, and signing out everywhere.
 - `GET /me`: who a token's person is, for any client's token; answered by
   CORS to the public clients' own origins.
 - `/names`: the register of names (names.py), for applications marked as
@@ -22,11 +27,13 @@ import base64
 import binascii
 import json
 import os
+import secrets
+import time
 from html import escape
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
 from mcp.server.auth.routes import create_auth_routes
@@ -34,8 +41,9 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
-from dianoia_auth import accounts, names, tokens
-from dianoia_auth.provider import REGISTERED_SCOPE, provider, what_it_asks
+from dianoia_auth import accounts, names, sessions, tokens
+from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, provider, what_it_asks
+from dianoia_auth.store import sha
 
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
@@ -190,10 +198,66 @@ def _human(form: dict, ip: str) -> bool:
         return False
 
 
-def _login_page(request_id: str, sign_in, error: str = "") -> HTMLResponse:
+# A session (sessions.py) is a cookie on this host alone: __Host- where served
+# over https, which the browser then refuses to scope wider or send in clear.
+def _cookie_name() -> str:
+    return "__Host-session" if tokens.issuer().startswith("https://") else "session"
+
+
+def _session(request: Request):
+    return sessions.current(request.cookies.get(_cookie_name()))
+
+
+def _csrf(request: Request) -> str:
+    """A form's proof that it came from this site's own page, for what a session alone could do."""
+    return sha(f"csrf:{request.cookies.get(_cookie_name(), '')}")[:32]
+
+
+def _checked(request: Request, form: dict) -> bool:
+    return bool(request.cookies.get(_cookie_name())) and secrets.compare_digest(form.get("csrf", ""), _csrf(request))
+
+
+def _set_session(response: Response, token: str) -> Response:
+    response.set_cookie(_cookie_name(), token, max_age=sessions.SESSION_TTL, path="/", httponly=True,
+                        secure=tokens.issuer().startswith("https://"), samesite="lax")
+    return response
+
+
+def _clear_session(response: Response) -> Response:
+    response.delete_cookie(_cookie_name(), path="/", httponly=True,
+                           secure=tokens.issuer().startswith("https://"), samesite="lax")
+    return response
+
+
+_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; "
+        "frame-ancestors 'none'; base-uri 'none'")
+
+
+def _page(title: str, body: str, script: str = "", status: int = 200) -> HTMLResponse:
+    # No form-action: the answer to a sign-in is a redirect to the client.
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>{script}
+<style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}}
+input{{width:100%;font:inherit;padding:.4rem;box-sizing:border-box}}button{{font:inherit;margin:.8rem .6rem 0 0}}
+.error{{color:#b00}}.hint{{color:#555;font-size:.9rem}}.cf-turnstile{{margin-top:.8rem}}
+ul{{padding-left:1.1rem}}li{{margin:.4rem 0}}li form{{display:inline}}li button{{margin:0 0 0 .5rem}}</style></head><body>
+<h1>{escape(title)}</h1>
+{body}
+</body></html>""", status_code=status, headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
+                                               "Referrer-Policy": "no-referrer", "Content-Security-Policy": _CSP})
+
+
+def _asking(sign_in) -> str:
+    if sign_in.for_account:
+        return "<p>Sign in to see your account: the apps you have let in, and where you are signed in.</p>"
     client_name = escape(sign_in.client.client_name or "An application")
     redirect_host = escape(urlparse(str(sign_in.params.redirect_uri)).hostname or "")
-    asks = what_it_asks(sign_in.scopes)
+    return f"<p><b>{client_name}</b> ({redirect_host}) asks {what_it_asks(sign_in.scopes)}.</p>"
+
+
+def _login_page(request_id: str, sign_in, error: str = "") -> HTMLResponse:
     note = f'<p class="error">{escape(error)}</p>' if error else ""
     site_key = os.environ.get("AUTH_TURNSTILE_SITE_KEY", "")
     request_field = f'<input type="hidden" name="request" value="{escape(request_id)}">'
@@ -212,32 +276,40 @@ def _login_page(request_id: str, sign_in, error: str = "") -> HTMLResponse:
 {challenge}
 <button name="action" value="send">Send me a code</button>{deny}
 </form>
-<p class="hint">No account yet? Signing in makes one: one account for noesis, Roxana and The Floor.</p>"""
+<p class="hint">No account yet? Signing in makes one: one account for noesis, Roxana and The Floor,
+and signing in once signs you in to each of them.</p>"""
         script = ('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
                   if site_key else "")
-    # No form-action: the answer to a sign-in is a redirect to the client.
-    csp = ("default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; "
-           "frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; "
-           "frame-ancestors 'none'; base-uri 'none'")
-    return HTMLResponse(f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in</title>{script}
-<style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}}
-input{{width:100%;font:inherit;padding:.4rem;box-sizing:border-box}}button{{font:inherit;margin:.8rem .6rem 0 0}}
-.error{{color:#b00}}.hint{{color:#555;font-size:.9rem}}.cf-turnstile{{margin-top:.8rem}}</style></head><body>
-<h1>Sign in</h1>
-<p><b>{client_name}</b> ({redirect_host}) asks {asks}.</p>
-{note}{form}
-</body></html>""", headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
-                            "Referrer-Policy": "no-referrer", "Content-Security-Policy": csp})
+    return _page("Sign in", f"{_asking(sign_in)}\n{note}{form}", script)
+
+
+def _consent_page(request: Request, request_id: str, sign_in, user: str) -> HTMLResponse:
+    """A session's first sign-in to a client: who is signed in, what the client asks, and the choice."""
+    found = accounts.account(user)
+    fields = (f'<input type="hidden" name="request" value="{escape(request_id)}">'
+              f'<input type="hidden" name="csrf" value="{_csrf(request)}">')
+    return _page("Sign in", f"""{_asking(sign_in)}
+<p>You are signed in as <b>{escape(user)}</b> ({escape(found.email if found else "")}).</p>
+<form method="post" action="/login">{fields}
+<button name="action" value="continue" autofocus>Continue as {escape(user)}</button><button name="action" value="other" class="quiet">Use another address</button><button name="action" value="deny" class="quiet">Deny</button>
+</form>""")
 
 
 @app.get("/login")
-def login(request: str) -> Response:
-    sign_in = provider.pending(request)
+def login(request: Request, request_id: str = Query(alias="request")) -> Response:
+    sign_in = provider.pending(request_id)
     if sign_in is None:
         return PlainTextResponse("This sign-in has expired; start again from the app.", status_code=400)
-    return _login_page(request, sign_in)
+    session = _session(request)
+    if session is not None and sign_in.prompt != "login":
+        if not provider.needs_consent(request_id, session.user):
+            return RedirectResponse(provider.complete(request_id, session.user), status_code=302)
+        if sign_in.prompt == "none":
+            return RedirectResponse(provider.refuse(request_id, "consent_required"), status_code=302)
+        return _consent_page(request, request_id, sign_in, session.user)
+    if sign_in.prompt == "none":
+        return RedirectResponse(provider.refuse(request_id, "login_required"), status_code=302)
+    return _login_page(request_id, sign_in)
 
 
 @app.post("/login")
@@ -250,6 +322,14 @@ async def login_submit(request: Request) -> Response:
     sign_in = provider.pending(request_id)
     if sign_in is None:
         return PlainTextResponse("This sign-in has expired or had too many tries; start again.", status_code=400)
+    if action == "continue":
+        session = _session(request)
+        if session is None or not _checked(request, form):
+            return _login_page(request_id, sign_in, error="Your session here has ended; sign in again.")
+        return RedirectResponse(provider.complete(request_id, session.user), status_code=302)
+    if action == "other":
+        sign_in.prompt = "login"
+        return _login_page(request_id, sign_in)
     if action == "restart":
         provider.restart(request_id)
         return _login_page(request_id, sign_in)
@@ -260,13 +340,103 @@ async def login_submit(request: Request) -> Response:
         why = await asyncio.to_thread(provider.send_code, request_id, form.get("email", ""), ip)
         return _login_page(request_id, sign_in, error=why or "")
     if action == "verify":
-        target = provider.verify_code(request_id, form.get("code", ""))
-        if target is not None:
-            return RedirectResponse(target, status_code=302)
+        done = provider.verify_code(request_id, form.get("code", ""))
+        if done is not None:
+            target, user = done
+            sessions.end(request.cookies.get(_cookie_name()))
+            token = sessions.create(user, request.headers.get("user-agent", ""))
+            return _set_session(RedirectResponse(target, status_code=302), token)
         if provider.pending(request_id) is None:
             return PlainTextResponse("Too many wrong codes; start again from the app.", status_code=400)
         return _login_page(request_id, sign_in, error="That is not the code we sent.")
     return PlainTextResponse("Unknown action.", status_code=400)
+
+
+# ---------------------------------------------------------------------------
+# Signing out, and the person's own page
+# ---------------------------------------------------------------------------
+
+def _may_return_to(client_id: str | None, uri: str | None) -> bool:
+    """A post-logout redirect: only to the origin of one of the client's own redirects."""
+    if not client_id or not uri:
+        return False
+    client = provider.client(client_id)
+    if client is None:
+        return False
+    origins = {f"{urlparse(str(u)).scheme}://{urlparse(str(u)).netloc}" for u in client.redirect_uris or []}
+    target = urlparse(uri)
+    return f"{target.scheme}://{target.netloc}" in origins and target.scheme in ("https", "http")
+
+
+@app.get("/logout")
+def logout(request: Request, client_id: str | None = None, post_logout_redirect_uri: str | None = None) -> Response:
+    """Ends this browser's session here; the applications' own grants are theirs to end."""
+    sessions.end(request.cookies.get(_cookie_name()))
+    if _may_return_to(client_id, post_logout_redirect_uri):
+        response: Response = RedirectResponse(post_logout_redirect_uri, status_code=302)
+    else:
+        response = _page("Signed out", "<p>You are signed out here. Apps you are signed in to stay signed in "
+                                       "until you sign out of each, or sign out everywhere from your account.</p>")
+    return _clear_session(response)
+
+
+def _when(at: float) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(at)) if at else "before 2026-11-09"
+
+
+@app.get("/account")
+def account_page(request: Request) -> Response:
+    session = _session(request)
+    if session is None:
+        return RedirectResponse(f"/login?request={provider.begin_account()}", status_code=302)
+    found = accounts.account(session.user)
+    csrf = f'<input type="hidden" name="csrf" value="{_csrf(request)}">'
+    apps = []
+    for client_id, at in sessions.grants(session.user):
+        client = provider.client(client_id)
+        name = escape(client.client_name if client and client.client_name else client_id)
+        apps.append(f'<li><b>{name}</b>, since {_when(at)}<form method="post" action="/account">{csrf}'
+                    f'<input type="hidden" name="client" value="{escape(client_id)}">'
+                    f'<button name="action" value="revoke" class="quiet">Remove</button></form></li>')
+    browsers = []
+    for other in sessions.of(session.user):
+        here = other.sha == session.sha
+        label = escape(other.agent[:80] or "a browser")
+        end = ("" if here else f'<form method="post" action="/account">{csrf}'
+               f'<input type="hidden" name="session" value="{other.sha}">'
+               f'<button name="action" value="end" class="quiet">Sign out</button></form>')
+        browsers.append(f"<li>{'<b>This browser</b>' if here else label}, last used {_when(other.seen_at)}{end}</li>")
+    return _page("Your account", f"""<p><b>{escape(session.user)}</b> ({escape(found.email if found else "")})</p>
+<h2>Apps you have let in</h2>
+<ul>{"".join(apps) or "<li>None.</li>"}</ul>
+<h2>Where you are signed in</h2>
+<ul>{"".join(browsers)}</ul>
+<form method="post" action="/account">{csrf}
+<button name="action" value="signout">Sign out</button><button name="action" value="everywhere" class="quiet">Sign out everywhere</button>
+</form>
+<p class="hint">Removing an app ends its access; it asks again the next time you use it. Signing out
+everywhere ends every browser's session and every app's access.</p>""")
+
+
+@app.post("/account")
+async def account_submit(request: Request) -> Response:
+    form = {k: v[0] for k, v in parse_qs((await request.body()).decode("utf-8", "replace")).items()}
+    session = _session(request)
+    if session is None or not _checked(request, form):
+        return RedirectResponse("/account", status_code=303)
+    action = form.get("action")
+    if action == "revoke":
+        sessions.revoke(session.user, form.get("client", ""))
+    elif action == "end":
+        sessions.end_one(session.user, form.get("session", ""))
+    elif action in ("signout", "everywhere"):
+        if action == "everywhere":
+            sessions.everywhere(session.user)
+        sessions.end(request.cookies.get(_cookie_name()))
+        return _clear_session(_page("Signed out", "<p>You are signed out"
+                                    + (" everywhere: every browser, and every app." if action == "everywhere" else " here.")
+                                    + "</p>"))
+    return RedirectResponse("/account", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +483,18 @@ def _with_client_credentials(token_app):
     return asgi
 
 
+def _with_prompt(authorize_app):
+    """The SDK's /authorize, with OpenID Connect's `prompt` passed on to the provider, which the SDK drops."""
+    async def asgi(scope, receive, send):
+        prompt = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace")).get("prompt", [None])[0]
+        token = PROMPT.set(prompt if prompt in ("login", "consent", "none") else None)
+        try:
+            await authorize_app(scope, receive, send)
+        finally:
+            PROMPT.reset(token)
+    return asgi
+
+
 for route in create_auth_routes(
     provider,
     issuer_url=AnyHttpUrl(tokens.issuer()),
@@ -322,6 +504,8 @@ for route in create_auth_routes(
 ):
     if route.path == "/token":
         route.app = _with_client_credentials(route.app)
+    elif route.path == "/authorize":
+        route.app = _with_prompt(route.app)
     app.router.routes.append(route)
 
 

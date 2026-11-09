@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -46,7 +47,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from dianoia_auth import accounts, tokens
+from dianoia_auth import accounts, sessions, tokens
 from dianoia_auth.store import connect, sha
 
 REFRESH_TTL = 90 * 24 * 60 * 60
@@ -62,6 +63,12 @@ NOESIS_API = "noesis:api"
 PERSON_SCOPES = (IDENTITY, NOESIS_READ, NOESIS_IMPORT, NOESIS_API)
 APPLICATION_SCOPES = ("noesis:keep", "thefloor:members")
 REGISTERED_SCOPE = NOESIS_READ
+
+# OpenID Connect's `prompt` (`login`, `consent`, `none`), which the SDK's
+# /authorize does not pass on: server.py reads it from the request.
+PROMPT: ContextVar[str | None] = ContextVar("prompt", default=None)
+# What a sign-in for /account itself, not for a client, is called.
+ACCOUNT = "account"
 
 ALLOWED_CALLBACKS = {
     ("https", "claude.ai", "/api/mcp/auth_callback"),
@@ -106,6 +113,12 @@ class SignIn:
     attempts: int = 0
     email: str = ""
     code_sha: str = ""
+    # `login` asks for the code even with a session; `consent` asks again what the client may have.
+    prompt: str | None = None
+
+    @property
+    def for_account(self) -> bool:
+        return self.client.client_id == ACCOUNT
 
 
 class AuthProvider:
@@ -163,8 +176,18 @@ class AuthProvider:
         scopes = params.scopes if params.scopes is not None else scopes_of(client)
         scopes = [s for s in scopes if s in PERSON_SCOPES]
         request_id = secrets.token_urlsafe(24)
-        self.sign_ins[request_id] = SignIn(client, params, scopes, now + SIGN_IN_TTL)
+        self.sign_ins[request_id] = SignIn(client, params, scopes, now + SIGN_IN_TTL, prompt=PROMPT.get())
         return f"{tokens.issuer()}/login?request={request_id}"
+
+    def begin_account(self) -> str:
+        """A sign-in for /account itself, which ends at /account rather than at a client."""
+        page = f"{tokens.issuer()}/account"
+        client = OAuthClientInformationFull(client_id=ACCOUNT, client_name="Your account", redirect_uris=[page])
+        params = AuthorizationParams(state=None, scopes=[], code_challenge="-", redirect_uri=page,
+                                     redirect_uri_provided_explicitly=True)
+        request_id = secrets.token_urlsafe(24)
+        self.sign_ins[request_id] = SignIn(client, params, [], time.time() + SIGN_IN_TTL, prompt="login")
+        return request_id
 
     def pending(self, request_id: str) -> SignIn | None:
         sign_in = self.sign_ins.get(request_id)
@@ -192,8 +215,9 @@ class AuthProvider:
         sign_in.expires_at = time.time() + SIGN_IN_TTL
         return None
 
-    def verify_code(self, request_id: str, code: str) -> str | None:
-        """The redirect back to the client with an OAuth code, if the code is the one sent."""
+    def verify_code(self, request_id: str, code: str) -> tuple[str, str] | None:
+        """Where the person goes and who they are, if the code is the one sent: the
+        redirect back to the client with an OAuth code, or /account."""
         sign_in = self.pending(request_id)
         if sign_in is None or not sign_in.code_sha:
             return None
@@ -203,17 +227,32 @@ class AuthProvider:
         found = accounts.create_account(sign_in.email)
         if found.disabled:
             return None
-        del self.sign_ins[request_id]
-        oauth_code = secrets.token_urlsafe(32)
+        return self.complete(request_id, found.user), found.user
+
+    def complete(self, request_id: str, user: str) -> str:
+        """Finishes a sign-in as `user`, whose code or session says who they are: the
+        consent kept, and the redirect back to the client with an OAuth code."""
+        sign_in = self.sign_ins.pop(request_id)
         params = sign_in.params
+        if sign_in.for_account:
+            return str(params.redirect_uri)
+        sessions.grant(user, sign_in.client.client_id, sign_in.scopes)
+        oauth_code = secrets.token_urlsafe(32)
         self.codes[oauth_code] = AuthorizationCode(
             code=oauth_code, scopes=sign_in.scopes, expires_at=time.time() + CODE_TTL,
             client_id=sign_in.client.client_id, code_challenge=params.code_challenge,
             redirect_uri=params.redirect_uri,
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
-            resource=params.resource, subject=found.user,
+            resource=params.resource, subject=user,
         )
         return construct_redirect_uri(str(params.redirect_uri), code=oauth_code, state=params.state)
+
+    def needs_consent(self, request_id: str, user: str) -> bool:
+        """Whether a session's sign-in must ask before finishing: a client not yet let have these scopes."""
+        sign_in = self.sign_ins[request_id]
+        if sign_in.for_account:
+            return False
+        return sign_in.prompt == "consent" or not sessions.covers(user, sign_in.client.client_id, sign_in.scopes)
 
     def restart(self, request_id: str) -> None:
         """Back to asking for an address: the code sent is forgotten."""
@@ -221,13 +260,15 @@ class AuthProvider:
         if sign_in is not None:
             sign_in.email = sign_in.code_sha = ""
 
-    def refuse(self, request_id: str) -> str | None:
-        """The redirect back with access_denied, when the person declines."""
+    def refuse(self, request_id: str, error: str = "access_denied") -> str | None:
+        """The redirect back with an error: access_denied when the person declines, or
+        login_required / consent_required when `prompt=none` cannot be met."""
         sign_in = self.sign_ins.pop(request_id, None)
         if sign_in is None:
             return None
-        return construct_redirect_uri(str(sign_in.params.redirect_uri),
-                                      error="access_denied", state=sign_in.params.state)
+        if sign_in.for_account:
+            return str(sign_in.params.redirect_uri)
+        return construct_redirect_uri(str(sign_in.params.redirect_uri), error=error, state=sign_in.params.state)
 
     # --- tokens ------------------------------------------------------------
 
