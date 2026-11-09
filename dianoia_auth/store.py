@@ -16,6 +16,8 @@
   about once per scope, not at every sign-in.
 - **passkeys**: a person's passkeys (passkeys.py), each its credential id,
   public key and signature count; the private half never leaves their device.
+- **departures**: an account deleted here, one row per project still to be
+  told (departures.py); the row is kept, done, as the record that it was.
 
 Codes and pending sign-ins live minutes, in memory (provider.py); access
 tokens are signed, not stored (tokens.py).
@@ -85,6 +87,14 @@ CREATE TABLE IF NOT EXISTS consents (
     scopes TEXT NOT NULL,
     granted_at REAL NOT NULL,
     PRIMARY KEY (user, client_id)
+);
+CREATE TABLE IF NOT EXISTS departures (
+    user TEXT NOT NULL,
+    project TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    tried_at REAL,
+    done_at REAL,
+    PRIMARY KEY (user, project)
 );
 """
 

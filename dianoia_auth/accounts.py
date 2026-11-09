@@ -6,7 +6,8 @@ account may do in each application is that application's: noesis keeps its
 plans and allowances, The Floor its own settings. Here an account is a user
 name, an address, and whether it is disabled; a disabled account's refresh
 tokens and sessions stop working at once, and its access tokens within their
-quarter hour (tokens.py).
+quarter hour (tokens.py). A person deletes their own account (`delete`, from
+/account), and each project is told (departures.py).
 """
 
 from __future__ import annotations
@@ -148,6 +149,27 @@ def hold(user: str, why: str) -> None:
     with connect() as db:
         db.execute("INSERT INTO held (user, why) VALUES (?, ?) ON CONFLICT (user) DO UPDATE SET why = excluded.why",
                    (user, why))
+
+
+def delete(user: str) -> None:
+    """A person's own deletion of their account (/account/delete): everything kept
+    here for them, at once, and each project owed word of it (departures.py).
+    The name stays held, so it is never given to somebody else; the address is
+    free, and signing in with it again makes a new account under a new name."""
+    from dianoia_auth import departures
+    now = time.time()
+    with transaction() as db:
+        found = db.execute("SELECT email FROM accounts WHERE user = ?", (user,)).fetchone()
+        if found is None:
+            raise ValueError(f"no account {user!r}")
+        db.execute("DELETE FROM reservations WHERE user = ? OR email = ?", (user, found[0]))
+        for table in ("accounts", "refresh", "sessions", "passkeys", "consents"):
+            db.execute(f"DELETE FROM {table} WHERE user = ?", (user,))
+        db.execute("INSERT INTO held (user, why) VALUES (?, ?) ON CONFLICT (user) DO UPDATE SET why = excluded.why",
+                   (user, f"deleted by its person, {time.strftime('%Y-%m-%d', time.gmtime(now))}"))
+        for project in departures.projects():
+            db.execute("INSERT OR REPLACE INTO departures (user, project, created_at) VALUES (?, ?, ?)",
+                       (user, project, now))
 
 
 def set_disabled(user: str, disabled: bool) -> None:

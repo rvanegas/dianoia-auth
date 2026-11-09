@@ -195,9 +195,9 @@ class AuthProvider:
         self.sign_ins[request_id] = SignIn(client, params, scopes, now + SIGN_IN_TTL, prompt=PROMPT.get())
         return f"{tokens.issuer()}/login?request={request_id}"
 
-    def begin_account(self) -> str:
-        """A sign-in for /account itself, which ends at /account rather than at a client."""
-        page = f"{tokens.issuer()}/account"
+    def begin_account(self, path: str = "/account") -> str:
+        """A sign-in for /account itself (or one of its pages), which ends there rather than at a client."""
+        page = f"{tokens.issuer()}{path}"
         client = OAuthClientInformationFull(client_id=ACCOUNT, client_name="Your account", redirect_uris=[page])
         params = AuthorizationParams(state=None, scopes=[], code_challenge="-", redirect_uri=page,
                                      redirect_uri_provided_explicitly=True)

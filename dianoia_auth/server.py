@@ -14,6 +14,8 @@
 - `/logout`: ends this browser's session, back to a client's own origin.
 - `/account`: the person's own page: the apps they let in (each removable),
   their passkeys, where they are signed in, and signing out everywhere.
+- `/account/delete`: deleting the account, after a sign-in of the last ten
+  minutes and the user name typed; every project is told (departures.py).
 - `/passkeys…`: adding a passkey and signing in with one (passkeys.py), from
   this site's own pages through `/passkeys.js`.
 - `GET /me`: who a token's person is, for any client's token; answered by
@@ -31,6 +33,7 @@ import json
 import os
 import secrets
 import time
+from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -43,13 +46,24 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
-from dianoia_auth import accounts, names, passkeys, sessions, tokens
+from dianoia_auth import accounts, departures, names, passkeys, sessions, tokens
 from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, provider, what_it_asks
 from dianoia_auth.store import sha
 
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-app = FastAPI(title="dianoia-auth", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app):
+    # The calls a deletion still owes the projects, at start and hourly: on the
+    # real server alone, so a test's server never calls out.
+    retrying = asyncio.create_task(departures.retry_forever()) if tokens.issuer().startswith("https://") else None
+    yield
+    if retrying is not None:
+        retrying.cancel()
+
+
+app = FastAPI(title="dianoia-auth", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 def _deployed() -> dict:
@@ -261,6 +275,8 @@ ul{{padding-left:1.1rem}}li{{margin:.4rem 0}}li form{{display:inline}}li button{
 
 
 def _asking(sign_in) -> str:
+    if sign_in.for_account and str(sign_in.params.redirect_uri).endswith("/account/delete"):
+        return "<p>Sign in again to delete your account.</p>"
     if sign_in.for_account:
         return "<p>Sign in to see your account: the apps you have let in, and where you are signed in.</p>"
     client_name = escape(sign_in.client.client_name or "An application")
@@ -553,7 +569,10 @@ def account_page(request: Request) -> Response:
 <button name="action" value="signout">Sign out</button><button name="action" value="everywhere" class="quiet">Sign out everywhere</button>
 </form>
 <p class="hint">Removing an app ends its access; it asks again the next time you use it. Signing out
-everywhere ends every browser's session and every app's access.</p>""",
+everywhere ends every browser's session and every app's access.</p>
+<h2>Deleting your account</h2>
+<p>Deletes this account and what each app keeps for it: your noesis libraries and your account in The Floor.
+<a href="/account/delete">Delete my account…</a></p>""",
                  _PASSKEYS_JS, data={"passkeys": "account", "csrf": _csrf(request)})
 
 
@@ -578,6 +597,57 @@ async def account_submit(request: Request) -> Response:
                                     + (" everywhere: every browser, and every app." if action == "everywhere" else " here.")
                                     + "</p>"))
     return RedirectResponse("/account", status_code=303)
+
+
+# How recent a sign-in must be to delete the account: a browser left signed in
+# for weeks is not enough to end everything.
+FRESH_SIGN_IN = 10 * 60
+
+
+def _deleting(request: Request):
+    """The session that may delete its account, or None: signed in within FRESH_SIGN_IN."""
+    session = _session(request)
+    return session if session is not None and time.time() - session.created_at <= FRESH_SIGN_IN else None
+
+
+def _delete_page(user: str, request: Request, error: str = "") -> HTMLResponse:
+    note = f'<p class="error">{escape(error)}</p>' if error else ""
+    return _page("Delete your account", f"""<p>This deletes <b>{escape(user)}</b>, at once:</p>
+<ul>
+<li>this account: its address, its passkeys, every browser signed in, and every app you let in;</li>
+<li>your noesis libraries, which close at once and are removed for good thirty days later, until when they
+can be restored by asking;</li>
+<li>your account in The Floor, as deleting it there would: channels you share with others carry on without
+you.</li>
+</ul>
+<p>Nobody will be given the name {escape(user)} again. Signing in with your address afterwards makes a new,
+empty account.</p>{note}
+<form method="post" action="/account/delete"><input type="hidden" name="csrf" value="{_csrf(request)}">
+<label>Type your user name to confirm<input name="user" autocomplete="off" autocapitalize="none" required></label>
+<button>Delete my account</button> <a href="/account">Keep it</a>
+</form>""")
+
+
+@app.get("/account/delete")
+def delete_page(request: Request) -> Response:
+    session = _deleting(request)
+    if session is None:
+        return RedirectResponse(f"/login?request={provider.begin_account('/account/delete')}", status_code=302)
+    return _delete_page(session.user, request)
+
+
+@app.post("/account/delete")
+async def delete_submit(request: Request) -> Response:
+    form = {k: v[0] for k, v in parse_qs((await request.body()).decode("utf-8", "replace")).items()}
+    session = _deleting(request)
+    if session is None or not _checked(request, form):
+        return RedirectResponse("/account/delete", status_code=303)
+    if form.get("user", "").strip().lower() != session.user:
+        return _delete_page(session.user, request, error="That is not your user name; nothing was deleted.")
+    accounts.delete(session.user)
+    await asyncio.to_thread(departures.tell, session.user)
+    return _clear_session(_page("Account deleted", f"""<p>{escape(session.user)} is deleted, and every app is
+told. Your noesis libraries can be restored for thirty days by asking.</p>"""))
 
 
 # ---------------------------------------------------------------------------
