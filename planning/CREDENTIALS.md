@@ -31,3 +31,10 @@ Read this before changing one, rotating one, or adding one.
   in `auth.db` as a hash. A stolen cookie signs its thief in to every client,
   as that person, until it lapses (thirty days from last use) or the person
   signs out of it on `/account`; disabling the account ends it at once.
+- **App Review's code** — `AUTH_REVIEW_ADDRESS` and `AUTH_REVIEW_CODE` in
+  `~/dianoia-auth/.env` (since 2026-11-09), copied from The Floor's
+  `REVIEW_IDENTIFIER`/`REVIEW_CODE` in `~/.config/thefloor/demo-account.txt`.
+  **Public by design**: the code is published in the App Store review notes,
+  so anyone who reads them can sign in as that account, which holds demo data
+  alone (The Floor's `planning/DEMO-ACCOUNT.md`). Changing it means changing
+  the review notes at the same time, or the next submission's sign-in fails.
