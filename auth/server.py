@@ -169,9 +169,9 @@ def put_name_address(body: AddressMove, client: str = Depends(name_keeper)) -> d
 # ---------------------------------------------------------------------------
 
 def _client_ip(request: Request) -> str:
-    # Caddy on the box is the one front door and sets X-Forwarded-For.
+    """The person's address: the last X-Forwarded-For, Caddy's, since only Caddy reaches the port."""
     forwarded = request.headers.get("x-forwarded-for", "")
-    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "")
+    return forwarded.rsplit(",", 1)[-1].strip() or (request.client.host if request.client else "")
 
 
 def _human(form: dict, ip: str) -> bool:
