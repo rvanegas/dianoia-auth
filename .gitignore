@@ -1,0 +1,7 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.env
+auth/deployed.json
+.claude/worktrees/
+.claude/settings.local.json

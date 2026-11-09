@@ -1,0 +1,6 @@
+#!/bin/bash
+# Before `ts deploy` sends anything: the tests.
+set -euo pipefail
+cd "$TS_ROOT"
+echo "→ tests"
+python3 -m pytest -q tests/ >/dev/null

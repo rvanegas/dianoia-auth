@@ -1,0 +1,9 @@
+#!/bin/bash
+# After `ts deploy` syncs: rebuild and restart the container. /srv/auth holds
+# auth.db and the signing key: data, never touched here.
+set -euo pipefail
+ssh -o BatchMode=yes "$HOST" 'set -euo pipefail
+  cd ~/auth
+  [ -f .env ] || { echo "✗ no ~/auth/.env on the box (PROJECTS.md names what it holds)" >&2; exit 1; }
+  [ -d /srv/auth ] || { echo "✗ no /srv/auth on the box" >&2; exit 1; }
+  docker compose up --build -d --remove-orphans 2>&1 | tail -3'
