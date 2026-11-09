@@ -13,7 +13,9 @@
   first time what it may have. `prompt=login|consent|none` is honoured.
 - `/logout`: ends this browser's session, back to a client's own origin.
 - `/account`: the person's own page: the apps they let in (each removable),
-  where they are signed in, and signing out everywhere.
+  their passkeys, where they are signed in, and signing out everywhere.
+- `/passkeys…`: adding a passkey and signing in with one (passkeys.py), from
+  this site's own pages through `/passkeys.js`.
 - `GET /me`: who a token's person is, for any client's token; answered by
   CORS to the public clients' own origins.
 - `/names`: the register of names (names.py), for applications marked as
@@ -41,7 +43,7 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
-from dianoia_auth import accounts, names, sessions, tokens
+from dianoia_auth import accounts, names, passkeys, sessions, tokens
 from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, provider, what_it_asks
 from dianoia_auth.store import sha
 
@@ -210,7 +212,11 @@ def _session(request: Request):
 
 def _csrf(request: Request) -> str:
     """A form's proof that it came from this site's own page, for what a session alone could do."""
-    return sha(f"csrf:{request.cookies.get(_cookie_name(), '')}")[:32]
+    return _csrf_for(request.cookies.get(_cookie_name(), ""))
+
+
+def _csrf_for(token: str) -> str:
+    return sha(f"csrf:{token}")[:32]
 
 
 def _checked(request: Request, form: dict) -> bool:
@@ -229,20 +235,25 @@ def _clear_session(response: Response) -> Response:
     return response
 
 
-_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src https://challenges.cloudflare.com; "
-        "frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; "
+# Scripts: this site's own (passkeys.js) and Turnstile's, nothing inline.
+_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; "
         "frame-ancestors 'none'; base-uri 'none'")
+_PASSKEYS_JS = '<script src="/passkeys.js" defer></script>'
 
 
-def _page(title: str, body: str, script: str = "", status: int = 200) -> HTMLResponse:
+
+def _page(title: str, body: str, script: str = "", status: int = 200, data: dict | None = None) -> HTMLResponse:
     # No form-action: the answer to a sign-in is a redirect to the client.
+    # `data` becomes <body data-*>, what passkeys.js reads of the page.
+    attributes = "".join(f' data-{k}="{escape(str(v))}"' for k, v in (data or {}).items())
     return HTMLResponse(f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)}</title>{script}
 <style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}}
 input{{width:100%;font:inherit;padding:.4rem;box-sizing:border-box}}button{{font:inherit;margin:.8rem .6rem 0 0}}
 .error{{color:#b00}}.hint{{color:#555;font-size:.9rem}}.cf-turnstile{{margin-top:.8rem}}
-ul{{padding-left:1.1rem}}li{{margin:.4rem 0}}li form{{display:inline}}li button{{margin:0 0 0 .5rem}}</style></head><body>
+ul{{padding-left:1.1rem}}li{{margin:.4rem 0}}li form{{display:inline}}li button{{margin:0 0 0 .5rem}}</style></head><body{attributes}>
 <h1>{escape(title)}</h1>
 {body}
 </body></html>""", status_code=status, headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
@@ -272,14 +283,18 @@ def _login_page(request_id: str, sign_in, error: str = "") -> HTMLResponse:
     else:
         challenge = f'<div class="cf-turnstile" data-sitekey="{escape(site_key)}"></div>' if site_key else ""
         form = f"""<form method="post" action="/login">{request_field}
-<label>Your email address<br><input name="email" type="email" autocomplete="email" required autofocus></label>
+<label>Your email address<br><input name="email" type="email" autocomplete="email webauthn" required autofocus></label>
 {challenge}
 <button name="action" value="send">Send me a code</button>{deny}
 </form>
+<p class="passkey"><button type="button" id="passkey-sign-in">Sign in with a passkey</button></p>
+<p class="error passkey" id="passkey-error"></p>
 <p class="hint">No account yet? Signing in makes one: one account for noesis, Roxana and The Floor,
 and signing in once signs you in to each of them.</p>"""
-        script = ('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
-                  if site_key else "")
+        script = _PASSKEYS_JS + ('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
+                                 if site_key else "")
+        return _page("Sign in", f"{_asking(sign_in)}\n{note}{form}", script,
+                     data={"passkeys": "login", "request": request_id})
     return _page("Sign in", f"{_asking(sign_in)}\n{note}{form}", script)
 
 
@@ -345,11 +360,124 @@ async def login_submit(request: Request) -> Response:
             target, user = done
             sessions.end(request.cookies.get(_cookie_name()))
             token = sessions.create(user, request.headers.get("user-agent", ""))
+            if not passkeys.of(user) and not request.cookies.get(_LATER_COOKIE):
+                return _set_session(_offer_page(target, token), token)
             return _set_session(RedirectResponse(target, status_code=302), token)
         if provider.pending(request_id) is None:
             return PlainTextResponse("Too many wrong codes; start again from the app.", status_code=400)
         return _login_page(request_id, sign_in, error="That is not the code we sent.")
     return PlainTextResponse("Unknown action.", status_code=400)
+
+
+# ---------------------------------------------------------------------------
+# Passkeys (passkeys.py)
+# ---------------------------------------------------------------------------
+
+# "Not now" to the offer, remembered in this browser for thirty days.
+_LATER_COOKIE = "passkeys_later"
+_LATER_TTL = 30 * 24 * 60 * 60
+# Where an offer goes on to, kept here so that "Not now" names an offer and
+# never a URL: a link that redirected wherever it said would be an open one.
+_offers: dict[str, tuple[str, float]] = {}
+
+
+@app.get("/passkeys.js")
+def passkeys_js() -> Response:
+    script = (Path(__file__).resolve().parent / "static" / "passkeys.js").read_text(encoding="utf-8")
+    return Response(script, media_type="text/javascript; charset=utf-8",
+                    headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+def _offer_page(target: str, token: str) -> HTMLResponse:
+    """After a code sign-in on a device with no passkey: one, to come back without a code."""
+    now = time.time()
+    for key, (_, expires) in list(_offers.items()):
+        if expires < now:
+            del _offers[key]
+    offer = secrets.token_urlsafe(16)
+    _offers[offer] = (target, now + 10 * 60)
+    return _page("Sign in faster next time", f"""<p>Add a passkey, and next time this device signs you in with
+your fingerprint, face or screen lock instead of a code. It works for noesis, Roxana and The Floor.</p>
+<p class="passkey"><button type="button" id="passkey-add" autofocus>Add a passkey</button>
+<a href="/passkeys/later?offer={offer}">Not now</a></p>
+<p class="error" id="passkey-error"></p>
+<noscript><p><a href="/passkeys/later?offer={offer}">Continue</a></p></noscript>""",
+                 _PASSKEYS_JS, data={"passkeys": "offer", "csrf": _csrf_for(token), "next": target})
+
+
+@app.get("/passkeys/later")
+def passkeys_later(offer: str = "") -> Response:
+    found = _offers.pop(offer, None)
+    if found is None:
+        return PlainTextResponse("This sign-in has expired; start again from the app.", status_code=400)
+    response = RedirectResponse(found[0], status_code=302)
+    response.set_cookie(_LATER_COOKIE, "1", max_age=_LATER_TTL, path="/", httponly=True,
+                        secure=tokens.issuer().startswith("https://"), samesite="lax")
+    return response
+
+
+def _signed_in(request: Request):
+    """The session behind a passkey request from this site's own page, or 401/403."""
+    session = _session(request)
+    if session is None:
+        raise HTTPException(401, "Your session here has ended; sign in again.")
+    if not secrets.compare_digest(request.headers.get("x-csrf", ""), _csrf(request)):
+        raise HTTPException(403, "Not from this site's page.")
+    return session
+
+
+def _device(agent: str) -> str:
+    """A passkey's name, from what made it: enough to tell two apart on /account."""
+    for marker, name in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Macintosh", "Mac"),
+                         ("Windows", "Windows"), ("Linux", "Linux")):
+        if marker in agent:
+            return name
+    return "A device"
+
+
+@app.post("/passkeys/options")
+def passkey_options(request: Request) -> Response:
+    session = _signed_in(request)
+    try:
+        return Response(passkeys.registration_options(session.user, session.sha), media_type="application/json")
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.post("/passkeys")
+async def passkey_add(request: Request) -> dict:
+    session = _signed_in(request)
+    body = await request.json()
+    try:
+        passkeys.register(session.user, session.sha, body.get("credential") or {},
+                          _device(request.headers.get("user-agent", "")))
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"added": True}
+
+
+@app.post("/passkeys/sign-in/options")
+async def passkey_sign_in_options(request: Request) -> Response:
+    body = await request.json()
+    if provider.pending(str(body.get("request", ""))) is None:
+        raise HTTPException(400, "This sign-in has expired; start again from the app.")
+    return Response(passkeys.authentication_options(body["request"]), media_type="application/json")
+
+
+@app.post("/passkeys/sign-in")
+async def passkey_sign_in(request: Request) -> Response:
+    """A passkey answers a pending sign-in: a session, as a code would make, and on to the client."""
+    body = await request.json()
+    request_id = str(body.get("request", ""))
+    if provider.pending(request_id) is None:
+        raise HTTPException(400, "This sign-in has expired; start again from the app.")
+    try:
+        user = passkeys.authenticate(request_id, body.get("credential") or {})
+    except passkeys.PasskeyError as exc:
+        raise HTTPException(400, str(exc)) from None
+    sessions.end(request.cookies.get(_cookie_name()))
+    token = sessions.create(user, request.headers.get("user-agent", ""))
+    return _set_session(JSONResponse({"redirect": provider.complete(request_id, user)}), token)
 
 
 # ---------------------------------------------------------------------------
@@ -406,16 +534,27 @@ def account_page(request: Request) -> Response:
                f'<input type="hidden" name="session" value="{other.sha}">'
                f'<button name="action" value="end" class="quiet">Sign out</button></form>')
         browsers.append(f"<li>{'<b>This browser</b>' if here else label}, last used {_when(other.seen_at)}{end}</li>")
+    keys = "".join(
+        f'<li>{escape(key["name"] or "A passkey")}, added {_when(key["created_at"])}'
+        f'{", last used " + _when(key["used_at"]) if key["used_at"] else ""}'
+        f'<form method="post" action="/account">{csrf}<input type="hidden" name="passkey" value="{escape(key["id"])}">'
+        f'<button name="action" value="remove_passkey" class="quiet">Remove</button></form></li>'
+        for key in passkeys.of(session.user))
     return _page("Your account", f"""<p><b>{escape(session.user)}</b> ({escape(found.email if found else "")})</p>
 <h2>Apps you have let in</h2>
 <ul>{"".join(apps) or "<li>None.</li>"}</ul>
+<h2>Passkeys</h2>
+<ul>{keys or "<li>None. Add one to sign in on this device without a code.</li>"}</ul>
+<p class="passkey"><button type="button" id="passkey-add">Add a passkey</button></p>
+<p class="error" id="passkey-error"></p>
 <h2>Where you are signed in</h2>
 <ul>{"".join(browsers)}</ul>
 <form method="post" action="/account">{csrf}
 <button name="action" value="signout">Sign out</button><button name="action" value="everywhere" class="quiet">Sign out everywhere</button>
 </form>
 <p class="hint">Removing an app ends its access; it asks again the next time you use it. Signing out
-everywhere ends every browser's session and every app's access.</p>""")
+everywhere ends every browser's session and every app's access.</p>""",
+                 _PASSKEYS_JS, data={"passkeys": "account", "csrf": _csrf(request)})
 
 
 @app.post("/account")
@@ -429,6 +568,8 @@ async def account_submit(request: Request) -> Response:
         sessions.revoke(session.user, form.get("client", ""))
     elif action == "end":
         sessions.end_one(session.user, form.get("session", ""))
+    elif action == "remove_passkey":
+        passkeys.remove(session.user, form.get("passkey", ""))
     elif action in ("signout", "everywhere"):
         if action == "everywhere":
             sessions.everywhere(session.user)

@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import io
 import os
+import re
 import secrets
 import socket
 import threading
@@ -106,7 +107,15 @@ def authorize(url, client_id, challenge, redirect=CALLBACK, state="s1", **extra)
 def sign_in(url, request_id, email="ann@example.com"):
     sent = httpx.post(f"{url}/login", data={"request": request_id, "email": email, "action": "send"})
     assert sent.status_code == 200 and "on its way" in sent.text, sent.text
-    return httpx.post(f"{url}/login", data={"request": request_id, "code": SENT[email], "action": "verify"})
+    return past_offer(url, httpx.post(f"{url}/login", data={"request": request_id, "code": SENT[email], "action": "verify"}))
+
+
+def past_offer(url, response, client=None):
+    """A code sign-in on a device with no passkey is offered one first: "Not now", and on to the client."""
+    if response.status_code == 200 and "/passkeys/later?offer=" in response.text:
+        later = re.search(r'href="(/passkeys/later\?offer=[^"]+)"', response.text).group(1)
+        return (client.get(later) if client is not None else httpx.get(f"{url}{later}"))
+    return response
 
 
 def code_of(response) -> str:

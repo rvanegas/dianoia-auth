@@ -14,6 +14,8 @@
   its cookie, which lets every client's sign-in skip the code.
 - **consents**: what a person has let each client have, so a client is asked
   about once per scope, not at every sign-in.
+- **passkeys**: a person's passkeys (passkeys.py), each its credential id,
+  public key and signature count; the private half never leaves their device.
 
 Codes and pending sign-ins live minutes, in memory (provider.py); access
 tokens are signed, not stored (tokens.py).
@@ -66,6 +68,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     agent TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user);
+CREATE TABLE IF NOT EXISTS passkeys (
+    credential_id TEXT PRIMARY KEY,
+    user TEXT NOT NULL,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    transports TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    used_at REAL
+);
+CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys (user);
 CREATE TABLE IF NOT EXISTS consents (
     user TEXT NOT NULL,
     client_id TEXT NOT NULL,

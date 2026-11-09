@@ -12,3 +12,8 @@ address field; *Add a passkey?* after a code sign-in on a device without
 one, never before; `/account` lists, renames and removes them. The native
 apps get the system prompt in their sign-in sheet unchanged. Turnstile and
 the send limits stay on the code path.
+
+**Built 2026-11-09** (branch `passkeys`): all of the above but renaming, a
+passkey being named by the device that made it (iPhone, Mac…). Left after
+deploying: trying it on a real iPhone, in Safari and in The Floor's sign-in
+sheet, and on a Mac.

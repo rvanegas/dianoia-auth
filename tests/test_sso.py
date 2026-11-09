@@ -8,7 +8,7 @@ import httpx
 
 from dianoia_auth import accounts, sessions
 from dianoia_auth.store import connect
-from conftest import SENT, add_client, pkce
+from conftest import SENT, add_client, past_offer, pkce
 
 ROXANA = "https://roxana.example/signin"
 WEB = "https://noesis.example/web/"
@@ -43,7 +43,8 @@ def _by_code(browser, login_url, email="ann@example.com"):
     request_id = parse_qs(urlparse(login_url).query)["request"][0]
     assert 'type="email"' in browser.get(login_url).text
     browser.post("/login", data={"request": request_id, "email": email, "action": "send"})
-    back = browser.post("/login", data={"request": request_id, "code": SENT[email], "action": "verify"})
+    back = past_offer(None, browser.post("/login", data={"request": request_id, "code": SENT[email], "action": "verify"}),
+                      browser)
     assert back.status_code == 302, back.text
     return back.headers["location"]
 

@@ -5,7 +5,7 @@ import jwt
 import pytest
 
 from dianoia_auth import accounts, tokens
-from conftest import CALLBACK, SENT, add_client, authorize, basic, code_of, pkce, register, sign_in
+from conftest import CALLBACK, SENT, add_client, authorize, basic, code_of, past_offer, pkce, register, sign_in
 
 
 def _exchange(url, client, code, verifier, redirect=CALLBACK):
@@ -35,7 +35,7 @@ def test_claude_ai_signs_in_with_an_emailed_code(live):
     wrong = httpx.post(f"{url}/login", data={
         "request": request_id, "code": f"{(int(code) + 1) % 10**6:06d}", "action": "verify"})
     assert wrong.status_code == 200 and "not the code" in wrong.text
-    back = httpx.post(f"{url}/login", data={"request": request_id, "code": code, "action": "verify"})
+    back = past_offer(url, httpx.post(f"{url}/login", data={"request": request_id, "code": code, "action": "verify"}))
     assert back.headers["location"].startswith(CALLBACK) and "state=s1" in back.headers["location"]
     issued = _exchange(url, client, code_of(back), verifier).json()
     assert issued["token_type"] == "Bearer" and issued["expires_in"] == tokens.ACCESS_TTL
@@ -177,7 +177,7 @@ def test_app_review_signs_in_with_its_fixed_code(live, monkeypatch):
     _, challenge = pkce()
     request_id = authorize(url, client["client_id"], challenge)
     httpx.post(f"{url}/login", data={"request": request_id, "email": "review@example.com", "action": "send"})
-    back = httpx.post(f"{url}/login", data={"request": request_id, "code": "424242", "action": "verify"})
+    back = past_offer(url, httpx.post(f"{url}/login", data={"request": request_id, "code": "424242", "action": "verify"}))
     assert back.status_code == 302 and mailed == []
     # Anybody else is mailed a code of their own, and the fixed one is nothing to them.
     request_id = authorize(url, client["client_id"], challenge)

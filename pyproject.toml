@@ -12,6 +12,7 @@ dependencies = [
   "uvicorn>=0.30.0",
   "mcp>=2.3,<3",
   "pyjwt[crypto]>=2.8",
+  "webauthn==2.7.1",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,7 @@ dianoia-auth = "dianoia_auth.server:main"
 packages = ["dianoia_auth"]
 
 [tool.setuptools.package-data]
-dianoia_auth = ["deployed.json"]
+dianoia_auth = ["deployed.json", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
