@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -52,14 +54,27 @@ def _scopes(raw: dict) -> tuple[list[str], list[str]]:
     return person, (["noesis:keep"] if raw.get("keeps_libraries") else [])
 
 
+def _read(source: Path, query) -> dict:
+    """noesis's accounts.db, read from a private copy: it is in WAL mode, which
+    SQLite cannot open on a read-only mount, and the log may hold rows the
+    main file does not yet."""
+    with tempfile.TemporaryDirectory() as scratch:
+        for name in ("accounts.db", "accounts.db-wal", "accounts.db-shm"):
+            if (source / name).exists():
+                shutil.copyfile(source / name, Path(scratch) / name)
+        db = sqlite3.connect(Path(scratch) / "accounts.db")
+        try:
+            return query(db)
+        finally:
+            db.close()
+
+
 def plan(source: Path, noesis_url: str) -> dict:
-    db = sqlite3.connect(f"file:{source / 'accounts.db'}?mode=ro", uri=True)
-    try:
-        accounts = db.execute("SELECT user, email, created_at, disabled FROM accounts").fetchall()
-        reservations = db.execute("SELECT user, email, client, created_at FROM reservations").fetchall()
-        sends = db.execute("SELECT key, at FROM sends").fetchall()
-    finally:
-        db.close()
+    accounts, reservations, sends = _read(source, lambda db: (
+        db.execute("SELECT user, email, created_at, disabled FROM accounts").fetchall(),
+        db.execute("SELECT user, email, client, created_at FROM reservations").fetchall(),
+        db.execute("SELECT key, at FROM sends").fetchall(),
+    ))
     named = {a[0] for a in accounts} | {r[0] for r in reservations}
     held = {}
     users = source / "users.toml"

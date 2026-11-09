@@ -10,10 +10,14 @@ from dianoia_auth import accounts
 from conftest import script
 
 
+_open = []
+
+
 def _noesis(tmp_path):
     source = tmp_path / "noesis"
     source.mkdir()
     db = sqlite3.connect(source / "accounts.db")
+    db.execute("PRAGMA journal_mode=WAL")
     db.executescript("""
         CREATE TABLE accounts (user TEXT PRIMARY KEY, email TEXT, plan TEXT, created_at REAL,
                                disabled INTEGER, extra_usd REAL);
@@ -25,7 +29,8 @@ def _noesis(tmp_path):
         INSERT INTO sends VALUES ('all', 9999999999.0);
     """)
     db.commit()
-    db.close()
+    # Left open, as noesis's server leaves it: the rows are in the log, not yet the file.
+    _open.append(db)
     (source / "users.toml").write_text('[[tokens]]\nuser = "rodvandur"\nsha256 = "x"\n'
                                        '[[tokens]]\nuser = "nightly"\nsha256 = "y"\n')
     for name in ("ann", "thefloor", "olduser"):
@@ -62,6 +67,7 @@ def _noesis(tmp_path):
 def test_the_migration_carries_accounts_clients_and_grants(live, tmp_path, capsys):
     url = live
     source = _noesis(tmp_path)
+    assert (source / "accounts.db-wal").stat().st_size > 0
     migrate = script("migrate_from_noesis")
     migrate.main([str(source), "--noesis-url", "https://noesis.example"])
     assert "nothing changed" in capsys.readouterr().out and accounts.account("ann") is None
