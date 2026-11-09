@@ -25,5 +25,9 @@ and Roxana name a person the way The Floor does.
   the others in a discussion.
 - **A passkey** carries the display name as its `user_display_name`.
 
+**The names chosen at The Floor before this** are carried once:
+The Floor's `ts export-display-names`, then `scripts/display_names.py`
+(`--apply`) on this box, which keeps any name already kept here.
+
 A name changed here reaches an application through the next token it gets or
 the next lookup it makes; nothing is pushed.

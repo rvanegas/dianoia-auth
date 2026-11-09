@@ -90,3 +90,20 @@ def test_deleting_an_account_deletes_its_name(data):
     accounts.set_display_name("ann1", "Ann")
     accounts.delete("ann1")
     assert accounts.display_name("ann1") is None
+
+
+def test_the_floor_s_names_are_carried_once_keeping_any_here(data, capsys):
+    from conftest import script
+    from dianoia_auth.store import connect
+    import time
+    with connect() as db:
+        for user, email in (("ann1", "ann@example.com"), ("bob1", "bob@example.com")):
+            db.execute("INSERT INTO accounts (user, email, created_at) VALUES (?, ?, ?)", (user, email, time.time()))
+    accounts.set_display_name("bob1", "Robert")
+    lines = ["ann1\tAnn Example\n", "BOB1\tBobby\n", "nobody\tNo One\n"]
+    carry = script("display_names").main
+    assert carry([], lines) == 0 and accounts.display_name("ann1") is None      # a dry run writes nothing
+    assert "would set ann1: Ann Example" in capsys.readouterr().out
+    carry(["--apply"], lines)
+    assert "1 set, 1 kept, 1 skipped" in capsys.readouterr().out
+    assert accounts.display_names(["ann1", "bob1"]) == {"ann1": "Ann Example", "bob1": "Robert"}
