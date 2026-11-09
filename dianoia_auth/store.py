@@ -14,6 +14,9 @@
   its cookie, which lets every client's sign-in skip the code.
 - **consents**: what a person has let each client have, so a client is asked
   about once per scope, not at every sign-in.
+- **display_names**: the name a person is shown by in every application, by
+  user name (an account's or a reservation's), set by them or by the
+  application that keeps names (accounts.set_display_name).
 - **passkeys**: a person's passkeys (passkeys.py), each its credential id,
   public key and signature count; the private half never leaves their device.
 - **departures**: an account deleted here, one row per project still to be
@@ -81,6 +84,11 @@ CREATE TABLE IF NOT EXISTS passkeys (
     used_at REAL
 );
 CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys (user);
+CREATE TABLE IF NOT EXISTS display_names (
+    user TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    set_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS consents (
     user TEXT NOT NULL,
     client_id TEXT NOT NULL,

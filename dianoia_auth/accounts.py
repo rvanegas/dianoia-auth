@@ -4,7 +4,8 @@ Sign-up is open: the first sign-in with an address makes its account, under
 the name reserved for it (names.py) or one derived from the address. What an
 account may do in each application is that application's: noesis keeps its
 plans and allowances, The Floor its own settings. Here an account is a user
-name, an address, and whether it is disabled; a disabled account's refresh
+name, an address, whether it is disabled, and the display name it is shown
+by in every application (since 2026-11-09); a disabled account's refresh
 tokens and sessions stop working at once, and its access tokens within their
 quarter hour (tokens.py). A person deletes their own account (`delete`, from
 /account), and each project is told (departures.py).
@@ -34,6 +35,8 @@ USER_NAME_RE = re.compile(rf"^[a-z0-9_]{{{MIN_USER_NAME},{MAX_USER_NAME}}}$")
 OLD_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 # How many derived names are tried before one is given up on.
 NAME_TRIES = 1000
+# A display name: any words a person goes by, one line, this long at most.
+MAX_DISPLAY_NAME = 60
 
 
 @dataclass(frozen=True)
@@ -163,7 +166,7 @@ def delete(user: str) -> None:
         if found is None:
             raise ValueError(f"no account {user!r}")
         db.execute("DELETE FROM reservations WHERE user = ? OR email = ?", (user, found[0]))
-        for table in ("accounts", "refresh", "sessions", "passkeys", "consents"):
+        for table in ("accounts", "refresh", "sessions", "passkeys", "consents", "display_names"):
             db.execute(f"DELETE FROM {table} WHERE user = ?", (user,))
         db.execute("INSERT INTO held (user, why) VALUES (?, ?) ON CONFLICT (user) DO UPDATE SET why = excluded.why",
                    (user, f"deleted by its person, {time.strftime('%Y-%m-%d', time.gmtime(now))}"))
@@ -196,3 +199,47 @@ def allow_send(email: str, ip: str) -> bool:
                 return False
         db.executemany("INSERT INTO sends (key, at) VALUES (?, ?)", [(k, now) for k in keys.values()])
     return True
+
+
+class InvalidDisplayName(ValueError):
+    pass
+
+
+def check_display_name(value: str) -> str:
+    """A display name as kept: one line, trimmed, not too long; empty clears it."""
+    name = " ".join(value.split())
+    if len(name) > MAX_DISPLAY_NAME:
+        raise InvalidDisplayName(f"A display name is at most {MAX_DISPLAY_NAME} characters.")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise InvalidDisplayName("A display name cannot hold control characters.")
+    return name
+
+
+def display_names(users: list[str]) -> dict[str, str | None]:
+    """Each user's display name, None where they have none."""
+    found: dict[str, str | None] = dict.fromkeys(users)
+    with connect() as db:
+        for user, name in db.execute(
+                f"SELECT user, name FROM display_names WHERE user IN ({','.join('?' * len(users))})", users):
+            found[user] = name
+    return found
+
+
+def display_name(user: str) -> str | None:
+    return display_names([user])[user]
+
+
+def set_display_name(user: str, value: str) -> str | None:
+    """Sets the name an account or a reservation is shown by; empty clears it."""
+    name = check_display_name(value)
+    with transaction() as db:
+        if not any(db.execute(f"SELECT 1 FROM {table} WHERE user = ?", (user,)).fetchone()
+                   for table in ("accounts", "reservations")):
+            raise InvalidDisplayName(f"{user} is not an account or a reservation")
+        if name:
+            db.execute("INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?) "
+                       "ON CONFLICT (user) DO UPDATE SET name = excluded.name, set_at = excluded.set_at",
+                       (user, name, time.time()))
+        else:
+            db.execute("DELETE FROM display_names WHERE user = ?", (user,))
+    return name or None

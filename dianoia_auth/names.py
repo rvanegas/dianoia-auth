@@ -116,4 +116,5 @@ def rename_account(old: str, new: str) -> str:
             raise Invalid(f"{old} is not an account")
         db.execute("UPDATE accounts SET user = ? WHERE user = ?", (new, old))
         db.execute("UPDATE refresh SET user = ? WHERE user = ?", (new, old))
+        db.execute("UPDATE display_names SET user = ? WHERE user = ?", (new, old))
     return new

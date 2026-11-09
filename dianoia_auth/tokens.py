@@ -8,7 +8,9 @@ and delete the old one after ACCESS_TTL.
 
 Claims: `iss` this server, `sub` the user (or, for an application's own
 token, its client id), `aud` the resource asked for (RFC 8707) or this server,
-`client_id`, `scope`, `iat`, `exp`, `jti`. **They last ACCESS_TTL**: a
+`client_id`, `scope`, `iat`, `exp`, `jti`, and for a person `name`, the
+display name they are shown by, else their user name (since 2026-11-09).
+**They last ACCESS_TTL**: a
 resource server cannot ask whether the account was disabled since, so
 disabling one reaches it within that time, while refresh stops at once.
 """
@@ -73,13 +75,15 @@ def jwks() -> dict:
     return {"keys": out}
 
 
-def issue(sub: str, client_id: str, scopes: list[str], resource: str | None = None) -> tuple[str, int]:
-    """A signed access token and its lifetime in seconds."""
+def issue(sub: str, client_id: str, scopes: list[str], resource: str | None = None,
+          name: str | None = None) -> tuple[str, int]:
+    """A signed access token and its lifetime in seconds; a person's carries their name."""
     key = _key()
     now = int(time.time())
     claims = {
         "iss": issuer(), "sub": sub, "aud": resource or issuer(), "client_id": client_id,
         "scope": " ".join(scopes), "iat": now, "exp": now + ACCESS_TTL, "jti": secrets.token_urlsafe(12),
+        **({"name": name} if name else {}),
     }
     return jwt.encode(claims, key, algorithm="EdDSA", headers={"kid": _kid(key)}), ACCESS_TTL
 

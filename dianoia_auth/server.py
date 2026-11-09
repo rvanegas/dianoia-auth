@@ -1,4 +1,4 @@
-"""dianoia-auth's HTTP app, at auth.rvanegas.co: the OAuth routes, the sign-in page, /me and the register of names.
+"""dianoia-auth's HTTP app, at auth.rvanegas.co: the OAuth routes, the sign-in page, /me, display names and the register of names.
 
 - `GET /healthz`: open, the deployed commit (dianoia_auth/deployed.json, stamped by
   `ts deploy`).
@@ -12,8 +12,9 @@
   or, with a session here (sessions.py), at once, asking only a client's
   first time what it may have. `prompt=login|consent|none` is honoured.
 - `/logout`: ends this browser's session, back to a client's own origin.
-- `/account`: the person's own page: the apps they let in (each removable),
-  their passkeys, where they are signed in, and signing out everywhere.
+- `/account`: the person's own page: their display name, the apps they let
+  in (each removable), their passkeys, where they are signed in, and signing
+  out everywhere.
 - `/account/delete`: deleting the account, after a sign-in of the last ten
   minutes and the user name typed; every project is told (departures.py).
 - `/passkeys…`: adding a passkey and signing in with one (passkeys.py), from
@@ -22,6 +23,12 @@
   CORS to the public clients' own origins.
 - `/names`: the register of names (names.py), for applications marked as
   keeping names, by their id and secret as HTTP Basic.
+- Display names (since 2026-11-09): what a person is shown as in every
+  application. Set by the person (`PUT /me/display_name`, a token granted
+  `identity`; or `/account`) or by the application that keeps names
+  (`PUT /names/display`, The Floor's pair); read in `/me`, in a person's
+  token as `name`, and by user name at `GET /names/display` with any token
+  auth signed. The browser routes answer CORS to public clients' origins.
 """
 
 from __future__ import annotations
@@ -103,18 +110,62 @@ def me(claims: dict = Depends(bearer)) -> dict:
     found = accounts.account(claims["sub"])
     if found is None or found.disabled:
         raise HTTPException(401, "unknown token")
-    return {"user": found.user, "email": found.email, "client": claims["client_id"],
-            "scopes": claims["scope"].split()}
+    return {"user": found.user, "email": found.email, "display_name": accounts.display_name(found.user),
+            "client": claims["client_id"], "scopes": claims["scope"].split()}
 
 
-_ME_CORS = {"Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "authorization", "Access-Control-Max-Age": "600", "Vary": "Origin"}
+class DisplayName(BaseModel):
+    display_name: str
+
+
+def _displaying(change):
+    try:
+        return change()
+    except accounts.InvalidDisplayName as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.put("/me/display_name")
+def put_my_display_name(body: DisplayName, claims: dict = Depends(bearer)) -> dict:
+    """The person sets the name they are shown by, through any client granted `identity`."""
+    found = accounts.account(claims["sub"])
+    if found is None or found.disabled or "identity" not in claims["scope"].split():
+        raise HTTPException(403, "a person's token granted identity is required")
+    return {"display_name": _displaying(lambda: accounts.set_display_name(found.user, body.display_name))}
+
+
+# Who may read display names: the people and applications auth signs tokens
+# for, and an application that keeps names, by its pair. Nobody anonymous.
+MAX_LOOKUP = 200
+
+
+async def any_caller(authorization: str | None = Header(default=None)) -> str:
+    if authorization and authorization.startswith("Basic "):
+        return await name_keeper(authorization)
+    claims = await bearer(authorization)
+    return claims["sub"]
+
+
+@app.get("/names/display")
+def get_display_names(user: list[str] = Query(default=[]), caller: str = Depends(any_caller)) -> dict:
+    """Each user name's display name, null where it has none: for an application
+    naming people its own token does not describe (Roxana, the others in a discussion)."""
+    if len(user) > MAX_LOOKUP:
+        raise HTTPException(400, f"at most {MAX_LOOKUP} names at a time")
+    return {"names": accounts.display_names(list(dict.fromkeys(u.lower() for u in user)))}
+
+
+_ME_CORS = {"Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+            "Access-Control-Allow-Headers": "authorization, content-type", "Access-Control-Max-Age": "600",
+            "Vary": "Origin"}
+# The routes a public client's browser calls with its person's token.
+_CORS_PATHS = {"/me", "/me/display_name", "/names/display"}
 
 
 @app.middleware("http")
 async def me_cors(request: Request, call_next) -> Response:
     origin = request.headers.get("origin")
-    if request.url.path != "/me" or not origin:
+    if request.url.path not in _CORS_PATHS or not origin:
         return await call_next(request)
     allowed = origin in provider.browser_origins()
     if request.method == "OPTIONS":
@@ -179,6 +230,18 @@ def post_name(body: NameFor, client: str = Depends(name_keeper)) -> dict:
 def put_name(body: NameChoice, client: str = Depends(name_keeper)) -> dict:
     """Makes a name the address's: reserved if it has none, renamed if it has another."""
     return {"user": _naming(lambda: names.choose(body.email, body.user, client))}
+
+
+class DisplayNameFor(BaseModel):
+    user: str
+    display_name: str
+
+
+@app.put("/names/display")
+def put_display_name(body: DisplayNameFor, client: str = Depends(name_keeper)) -> dict:
+    """The application that keeps names sets the name one of its people is shown
+    by, an account's or a reservation's: The Floor, when it is set there."""
+    return {"display_name": _displaying(lambda: accounts.set_display_name(body.user.lower(), body.display_name))}
 
 
 @app.put("/names/address")
@@ -556,7 +619,14 @@ def account_page(request: Request) -> Response:
         f'<form method="post" action="/account">{csrf}<input type="hidden" name="passkey" value="{escape(key["id"])}">'
         f'<button name="action" value="remove_passkey" class="quiet">Remove</button></form></li>'
         for key in passkeys.of(session.user))
+    shown = accounts.display_name(session.user) or ""
     return _page("Your account", f"""<p><b>{escape(session.user)}</b> ({escape(found.email if found else "")})</p>
+<h2>Your name</h2>
+<form method="post" action="/account">{csrf}
+<input name="display_name" value="{escape(shown)}" maxlength="{accounts.MAX_DISPLAY_NAME}" placeholder="{escape(session.user)}">
+<button name="action" value="display_name">Save</button>
+</form>
+<p class="hint">What every app shows you as, The Floor, noesis and Roxana among them. Left empty, your user name.</p>
 <h2>Apps you have let in</h2>
 <ul>{"".join(apps) or "<li>None.</li>"}</ul>
 <h2>Passkeys</h2>
@@ -589,6 +659,12 @@ async def account_submit(request: Request) -> Response:
         sessions.end_one(session.user, form.get("session", ""))
     elif action == "remove_passkey":
         passkeys.remove(session.user, form.get("passkey", ""))
+    elif action == "display_name":
+        try:
+            accounts.set_display_name(session.user, form.get("display_name", ""))
+        except accounts.InvalidDisplayName as exc:
+            return _page("Your name", f"<p class=\"error\">{escape(str(exc))}</p><p><a href=\"/account\">Back</a></p>",
+                         status=400)
     elif action in ("signout", "everywhere"):
         if action == "everywhere":
             sessions.everywhere(session.user)

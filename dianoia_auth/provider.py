@@ -301,7 +301,7 @@ class AuthProvider:
         return code
 
     def _issue(self, client_id: str, user: str, scopes: list[str], resource: str | None) -> OAuthToken:
-        access, ttl = tokens.issue(user, client_id, scopes, resource)
+        access, ttl = tokens.issue(user, client_id, scopes, resource, name=accounts.display_name(user) or user)
         refresh = secrets.token_urlsafe(32)
         with connect() as db:
             db.execute("DELETE FROM refresh WHERE expires_at < ?", (time.time(),))

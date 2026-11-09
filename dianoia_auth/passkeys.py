@@ -103,7 +103,7 @@ def registration_options(user: str, session_sha: str) -> str:
     found = accounts.account(user)
     options = generate_registration_options(
         rp_id=rp_id(), rp_name=RP_NAME, user_id=_user_handle(user), user_name=found.email if found else user,
-        user_display_name=user,
+        user_display_name=accounts.display_name(user) or user,
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.REQUIRED, user_verification=UserVerificationRequirement.PREFERRED),
         exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(p["id"])) for p in existing],
