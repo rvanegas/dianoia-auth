@@ -6,7 +6,7 @@ to localhost (provider.allowed_redirect), and gives `noesis:read` alone; every
 other application is registered here. Its client id and secret are printed
 once, as `KEY=value` lines, for the application's own configuration.
 
-    docker compose run --rm -T auth python scripts/add_client.py thefloor --name "The Floor" \\
+    docker compose run --rm -T dianoia-auth python scripts/add_client.py thefloor --name "The Floor" \\
         --redirect https://thefloor.rvanegas.co/noesis/callback --scope "noesis:read noesis:import" \\
         --credentials noesis:keep --keeps-names
 
@@ -35,7 +35,7 @@ from urllib.parse import urlparse
 
 from mcp.shared.auth import OAuthClientInformationFull
 
-from auth.provider import APPLICATION_SCOPES, PERSON_SCOPES, provider
+from dianoia_auth.provider import APPLICATION_SCOPES, PERSON_SCOPES, provider
 
 
 def main(argv: list[str] | None = None) -> int:

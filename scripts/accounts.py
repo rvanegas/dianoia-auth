@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The operator's view of the accounts: list them, link or hold a name, disable or enable one.
 
-    docker compose run --rm -T auth python scripts/accounts.py list
-    docker compose run --rm -T auth python scripts/accounts.py link ann@example.com ann
-    docker compose run --rm -T auth python scripts/accounts.py hold rodvandur "noesis operator user"
-    docker compose run --rm -T auth python scripts/accounts.py disable ann
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py list
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py link ann@example.com ann
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py hold rodvandur "noesis operator user"
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py disable ann
 
 Disabling refuses the account's refresh tokens at once and its access tokens
 within their quarter hour (tokens.py). What an account may spend at noesis is
@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import time
 
-from auth import accounts
+from dianoia_auth import accounts
 
 
 def main(argv: list[str] | None = None) -> int:

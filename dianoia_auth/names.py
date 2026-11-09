@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import time
 
-from auth import accounts
-from auth.store import transaction
+from dianoia_auth import accounts
+from dianoia_auth.store import transaction
 
 FIXED = "Your username and address are your account's, and cannot be changed once it exists."
 

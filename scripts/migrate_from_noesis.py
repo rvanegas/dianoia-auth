@@ -19,7 +19,7 @@ writes auth's; noesis's copy is dropped by noesis's own migration after.
   since each reached noesis's /mcp. Access tokens are not carried: noesis's
   own expire within their hour, and every client refreshes.
 
-    ssh commons 'cd ~/auth && docker compose run --rm -T -v /srv/noesis:/noesis:ro auth \\
+    ssh commons 'cd ~/dianoia-auth && docker compose run --rm -T -v /srv/noesis:/noesis:ro auth \\
         python scripts/migrate_from_noesis.py /noesis --noesis-url https://noesis.rvanegas.co'
 
 Without --apply it prints what it would carry and changes nothing.
@@ -35,8 +35,8 @@ from pathlib import Path
 
 from mcp.shared.auth import OAuthClientInformationFull
 
-from auth.provider import IDENTITY, NOESIS_API, NOESIS_IMPORT, NOESIS_READ, PERSON_SCOPES, provider
-from auth.store import transaction
+from dianoia_auth.provider import IDENTITY, NOESIS_API, NOESIS_IMPORT, NOESIS_READ, PERSON_SCOPES, provider
+from dianoia_auth.store import transaction
 
 WEB_CLIENT_ID = "noesis-web"
 

@@ -1,9 +1,9 @@
 """Sign-in codes by email.
 
 Sent through SES's SMTP interface, on the `rvanegas.co` identity, through a
-configuration set of auth's own so its bounces and complaints are told apart
+configuration set of its own, `dianoia-auth`, so its bounces and complaints are told apart
 (rvanegas-site's PROJECTS.md). Configured from the environment, the box's
-~/auth/.env: AUTH_SMTP_HOST, AUTH_SMTP_PORT (587), AUTH_SMTP_USER,
+~/dianoia-auth/.env: AUTH_SMTP_HOST, AUTH_SMTP_PORT (587), AUTH_SMTP_USER,
 AUTH_SMTP_PASSWORD, AUTH_MAIL_FROM, AUTH_SES_CONFIGURATION_SET.
 
 Without AUTH_SMTP_HOST nothing is sent, and sign-in says mail is unavailable;
@@ -34,7 +34,7 @@ def send_code(to: str, code: str, client_name: str) -> None:
     message["From"] = env("AUTH_MAIL_FROM", "rvanegas.co <sign-in@rvanegas.co>")
     message["To"] = to
     message["Subject"] = f"Your sign-in code: {code}"
-    message["X-SES-CONFIGURATION-SET"] = env("AUTH_SES_CONFIGURATION_SET", "auth")
+    message["X-SES-CONFIGURATION-SET"] = env("AUTH_SES_CONFIGURATION_SET", "dianoia-auth")
     message.set_content(
         f"Your code to sign in is {code}.\n\n"
         f"{client_name} asked for it. It works for ten minutes, once.\n\n"

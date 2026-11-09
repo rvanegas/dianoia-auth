@@ -4,7 +4,7 @@ import httpx
 import jwt
 import pytest
 
-from auth import accounts, tokens
+from dianoia_auth import accounts, tokens
 from conftest import CALLBACK, SENT, add_client, authorize, basic, code_of, pkce, register, sign_in
 
 

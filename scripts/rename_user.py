@@ -6,14 +6,14 @@ scripts/rename_user.py (libraries, billing, speaker names), and at The Floor
 by hand. Tokens already out name the old user until they expire, within a
 quarter hour.
 
-    docker compose run --rm -T auth python scripts/rename_user.py old_name new_name
+    docker compose run --rm -T dianoia-auth python scripts/rename_user.py old_name new_name
 """
 
 from __future__ import annotations
 
 import argparse
 
-from auth import names
+from dianoia_auth import names
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,12 +1,12 @@
 @~/src/technosophia/WORKING.md
 
-# Working on auth
+# Working on dianoia-auth
 
 **This file is capped at technosophia's 20,000 bytes**, which `ts instructions check` measures in the tests.
 
 ## What this is
 
-**auth** is the one sign-in for the projects coordinated in `~/src/rvanegas-site`: The Floor, noesis, dianoia and Roxana. It is an OAuth authorization server at `auth.rvanegas.co`, moved out of noesis on 2026-11-08 (rvanegas-site `planning/task/one-sign-in-for-every-project-at-auth-rvanegas-co.md`, which is the plan and its order: the move, then SSO, then passkeys). People sign in by an emailed code; **there are no passwords**, by decision.
+**dianoia-auth** is the one sign-in for the projects coordinated in `~/src/rvanegas-site`: The Floor, noesis, dianoia and Roxana. *Dianoia* names the whole suite as well as its reasoning service, and this is the suite's sign-in, so its repository, package (`dianoia_auth`) and command carry the name while its host stays `auth.rvanegas.co`; the other projects call it *auth*. It is an OAuth authorization server, moved out of noesis on 2026-11-08 (rvanegas-site `planning/task/one-sign-in-for-every-project-at-auth-rvanegas-co.md`, which is the plan and its order: the move, then SSO, then passkeys). People sign in by an emailed code; **there are no passwords**, by decision.
 
 Shared conventions, hosting, and the APIs between this project and its siblings are coordinated in `~/src/rvanegas-site` (`CLAUDE.md` there). Read `PROJECTS.md` § *Shared rules* and § *Calls between projects* before changing config, deploy, hostnames, credentials, or any call to or from another project, and record such a change there.
 
@@ -20,7 +20,7 @@ technosophia's (`~/src/technosophia`), through `WORKING.md` above. No compatibil
 
 ```bash
 python -m pytest tests/                 # the suite; ts deploy runs it first
-auth --port 8002                        # serve, after pip install -e .
+dianoia-auth --port 8002                # serve, after pip install -e .
 ```
 
 ## Architecture
@@ -38,4 +38,4 @@ What stays with each application: noesis keeps plans, allowances, spend and spea
 
 ## Server
 
-On the `commons` box: `Dockerfile` / `docker-compose.yml`, `python:3.13-slim`, on `127.0.0.1:8002`, as uid 1000, with `/srv/auth` mounted at `/data`. `ts deploy` (`bin/ts.env`, `bin/hooks/`) runs the tests, syncs to `~/auth`, rebuilds, and checks `/healthz` on the box and at `auth.rvanegas.co`. The box's `~/auth/.env` holds `AUTH_PUBLIC_URL`, the `AUTH_SMTP_*` settings and secret, and the Turnstile keys.
+On the `commons` box: `Dockerfile` / `docker-compose.yml`, `python:3.13-slim`, on `127.0.0.1:8002`, as uid 1000, with `/srv/dianoia-auth` mounted at `/data`. `ts deploy` (`bin/ts.env`, `bin/hooks/`) runs the tests, syncs to `~/dianoia-auth`, rebuilds, and checks `/healthz` on the box and at `auth.rvanegas.co`. The box's `~/dianoia-auth/.env` holds `AUTH_PUBLIC_URL`, the `AUTH_SMTP_*` settings and secret, and the Turnstile keys.

@@ -39,13 +39,13 @@ CALLBACK = "https://claude.ai/api/mcp/auth_callback"
 @pytest.fixture
 def data(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTH_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr("auth.mail.send_code", lambda to, code, client_name: SENT.__setitem__(to, code))
+    monkeypatch.setattr("dianoia_auth.mail.send_code", lambda to, code, client_name: SENT.__setitem__(to, code))
     return tmp_path
 
 
 @pytest.fixture(scope="session")
 def server():
-    from auth.server import app
+    from dianoia_auth.server import app
     uv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))
     thread = threading.Thread(target=uv.run, daemon=True)
     thread.start()

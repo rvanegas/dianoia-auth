@@ -16,7 +16,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from auth.store import connect, transaction
+from dianoia_auth.store import connect, transaction
 
 # Sign-in mail: (key prefix, window in seconds, most sends in it).
 SEND_LIMITS = (("email", 60 * 60, 5), ("ip", 60 * 60, 10), ("all", 24 * 60 * 60, 300))

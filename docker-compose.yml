@@ -1,15 +1,15 @@
 services:
-  auth:
+  dianoia-auth:
     build: .
     restart: unless-stopped
     env_file:
       - .env
     environment:
       AUTH_DATA_DIR: /data
-    # The box's deploy user (ubuntu), which owns /srv/auth.
+    # The box's deploy user (ubuntu), which owns /srv/dianoia-auth.
     user: "1000:1000"
     volumes:
-      - /srv/auth:/data
+      - /srv/dianoia-auth:/data
     mem_limit: 256m
     # Loopback only: Caddy on the box is the one public front door
     # (rvanegas-site's Caddyfile).

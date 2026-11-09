@@ -1,6 +1,6 @@
-"""auth's HTTP app: the OAuth routes, the sign-in page, /me and the register of names.
+"""dianoia-auth's HTTP app, at auth.rvanegas.co: the OAuth routes, the sign-in page, /me and the register of names.
 
-- `GET /healthz`: open, the deployed commit (auth/deployed.json, stamped by
+- `GET /healthz`: open, the deployed commit (dianoia_auth/deployed.json, stamped by
   `ts deploy`).
 - The OAuth server, by the MCP SDK (`create_auth_routes`): metadata at
   /.well-known/oauth-authorization-server, /authorize, /token, /register,
@@ -34,12 +34,12 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
-from auth import accounts, names, tokens
-from auth.provider import REGISTERED_SCOPE, provider, what_it_asks
+from dianoia_auth import accounts, names, tokens
+from dianoia_auth.provider import REGISTERED_SCOPE, provider, what_it_asks
 
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-app = FastAPI(title="auth", docs_url=None, redoc_url=None)
+app = FastAPI(title="dianoia-auth", docs_url=None, redoc_url=None)
 
 
 def _deployed() -> dict:
@@ -334,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     import uvicorn
-    parser = argparse.ArgumentParser(prog="auth", description="the sign-in for rvanegas.co's projects")
+    parser = argparse.ArgumentParser(prog="dianoia-auth", description="the sign-in for rvanegas.co's projects")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8002)
     args = parser.parse_args(argv)

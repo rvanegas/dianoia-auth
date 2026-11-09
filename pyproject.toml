@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "auth"
+name = "dianoia-auth"
 version = "0.1.0"
 description = "The one sign-in for rvanegas.co's projects."
 requires-python = ">=3.11"
@@ -21,13 +21,13 @@ test = [
 ]
 
 [project.scripts]
-auth = "auth.server:main"
+dianoia-auth = "dianoia_auth.server:main"
 
 [tool.setuptools]
-packages = ["auth"]
+packages = ["dianoia_auth"]
 
 [tool.setuptools.package-data]
-auth = ["deployed.json"]
+dianoia_auth = ["deployed.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

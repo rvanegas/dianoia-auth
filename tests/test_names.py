@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from auth import accounts, names
+from dianoia_auth import accounts, names
 from conftest import add_client, basic, script
 
 

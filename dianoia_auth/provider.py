@@ -46,8 +46,8 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from auth import accounts, tokens
-from auth.store import connect, sha
+from dianoia_auth import accounts, tokens
+from dianoia_auth.store import connect, sha
 
 REFRESH_TTL = 90 * 24 * 60 * 60
 CODE_TTL = 5 * 60
@@ -174,7 +174,7 @@ class AuthProvider:
 
     def send_code(self, request_id: str, email: str, ip: str) -> str | None:
         """Mails a code for this sign-in; why not, if it was not sent."""
-        from auth import mail
+        from dianoia_auth import mail
         sign_in = self.pending(request_id)
         if sign_in is None:
             return "This sign-in has expired; start again from the app."

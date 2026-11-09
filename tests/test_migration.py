@@ -6,7 +6,7 @@ import sqlite3
 
 import httpx
 
-from auth import accounts
+from dianoia_auth import accounts
 from conftest import script
 
 

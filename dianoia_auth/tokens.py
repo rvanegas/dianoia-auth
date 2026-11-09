@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jwt.algorithms import OKPAlgorithm
 
-from auth.store import data_dir, sha
+from dianoia_auth.store import data_dir, sha
 
 ACCESS_TTL = 15 * 60
 
