@@ -11,6 +11,10 @@
 - `/login`: the sign-in that /authorize sends people to: by emailed code,
   or, with a session here (sessions.py), at once, asking only a client's
   first time what it may have. `prompt=login|consent|none` is honoured.
+- `/handoff`, `/handoff/choice`: an application hands its person's sign-in to a browser of
+  their own (handoff.py): a one-use code, by the application's id and secret
+  and a person's token issued to it, redeemed by that browser on its way to
+  a browser app.
 - `/logout`: ends this browser's session, back to a client's own origin.
 - `/account`: the person's own page: their display name, the apps they let
   in (each removable), their passkeys, where they are signed in, and signing
@@ -53,7 +57,7 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
-from dianoia_auth import accounts, departures, names, passkeys, sessions, tokens
+from dianoia_auth import accounts, departures, handoff, names, passkeys, sessions, tokens
 from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, provider, what_it_asks
 from dianoia_auth.store import sha
 
@@ -181,14 +185,20 @@ async def me_cors(request: Request, call_next) -> Response:
 # The register of names
 # ---------------------------------------------------------------------------
 
-async def name_keeper(authorization: str | None = Header(default=None)) -> str:
-    """The application calling the register, by its client id and secret (HTTP Basic)."""
+def _basic(authorization: str | None) -> tuple[str, str]:
+    """A client id and secret, as HTTP Basic."""
     if not authorization or not authorization.startswith("Basic "):
         raise HTTPException(401, "a client id and secret are required")
     try:
         client_id, _, secret = base64.b64decode(authorization.removeprefix("Basic ")).decode().partition(":")
     except (binascii.Error, UnicodeDecodeError):
         raise HTTPException(401, "a client id and secret are required") from None
+    return client_id, secret
+
+
+async def name_keeper(authorization: str | None = Header(default=None)) -> str:
+    """The application calling the register, by its client id and secret (HTTP Basic)."""
+    client_id, secret = _basic(authorization)
     if not provider.keeps_names(client_id, secret):
         raise HTTPException(401, "not an application that keeps names")
     return client_id
@@ -557,6 +567,85 @@ async def passkey_sign_in(request: Request) -> Response:
     sessions.end(request.cookies.get(_cookie_name()))
     token = sessions.create(user, request.headers.get("user-agent", ""))
     return _set_session(JSONResponse({"redirect": provider.complete(request_id, user)}), token)
+
+
+# ---------------------------------------------------------------------------
+# Handing a sign-in to a browser (handoff.py)
+# ---------------------------------------------------------------------------
+
+class HandoffFor(BaseModel):
+    token: str
+    next: str
+
+
+def _origin_of(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+@app.post("/handoff")
+def post_handoff(body: HandoffFor, authorization: str | None = Header(default=None)) -> Response:
+    """A one-use code that signs a browser in as the token's person, by the application the token was issued to."""
+    client_id, secret = _basic(authorization)
+    if not provider.application(client_id, secret):
+        raise HTTPException(401, "not an application")
+    claims = tokens.verify(body.token)
+    if claims is None or claims.get("client_id") != client_id or claims.get("sub") == client_id:
+        raise HTTPException(403, "a person's token issued to this application is required")
+    if not accounts.is_active(claims["sub"]):
+        raise HTTPException(403, "that account is not active")
+    parsed = urlparse(body.next)
+    if parsed.scheme not in ("https", "http") or _origin_of(body.next) not in provider.browser_origins():
+        raise HTTPException(400, "next must be a browser app's own origin")
+    code = handoff.issue(claims["sub"], client_id, body.next)
+    return JSONResponse({"url": f"{tokens.issuer()}/handoff?code={code}", "expires_in": handoff.CODE_TTL},
+                        headers={"Cache-Control": "no-store"})
+
+
+_EXPIRED_HANDOFF = "This link has expired. Open it again from the app."
+
+
+def _handed(request: Request, found: handoff.Handoff) -> Response:
+    """The browser signed in as the handoff's person, and on to where it goes."""
+    sessions.end(request.cookies.get(_cookie_name()))
+    token = sessions.create(found.user, request.headers.get("user-agent", ""))
+    return _set_session(RedirectResponse(found.next, status_code=302), token)
+
+
+@app.get("/handoff")
+def get_handoff(request: Request, code: str = "") -> Response:
+    found = handoff.peek(code)
+    if found is None:
+        return _page("Sign in", f"<p>{_EXPIRED_HANDOFF}</p>", status=400)
+    session = _session(request)
+    if session is None or session.user == found.user:
+        if handoff.redeem(code) is None:  # used meanwhile
+            return _page("Sign in", f"<p>{_EXPIRED_HANDOFF}</p>", status=400)
+        return _handed(request, found) if session is None else RedirectResponse(found.next, status_code=302)
+    # Signed in here as somebody else: asked, never switched silently, since a
+    # link that switched would let anybody sign a browser in as themselves.
+    client = provider.client(found.client_id)
+    name = escape(client.client_name if client and client.client_name else found.client_id)
+    return _page("Sign in", f"""<p>This browser is signed in as <b>{escape(session.user)}</b>.
+{name} opened it for <b>{escape(found.user)}</b>.</p>
+<form method="post" action="/handoff/choice"><input type="hidden" name="code" value="{escape(code)}">
+<input type="hidden" name="csrf" value="{_csrf(request)}">
+<button name="action" value="switch" autofocus>Continue as {escape(found.user)}</button><button name="action" value="stay" class="quiet">Stay {escape(session.user)}</button>
+</form>""")
+
+
+@app.post("/handoff/choice")
+async def handoff_choice(request: Request) -> Response:
+    """The answer from a browser signed in as somebody else: switch to the handoff's person, or stay."""
+    form = {k: v[0] for k, v in parse_qs((await request.body()).decode("utf-8", "replace")).items()}
+    if not _checked(request, form):
+        return _page("Sign in", f"<p>{_EXPIRED_HANDOFF}</p>", status=400)
+    found = handoff.redeem(form.get("code", ""))
+    if found is None:
+        return _page("Sign in", f"<p>{_EXPIRED_HANDOFF}</p>", status=400)
+    if form.get("action") == "switch":
+        return _handed(request, found)
+    return RedirectResponse(found.next, status_code=303)
 
 
 # ---------------------------------------------------------------------------

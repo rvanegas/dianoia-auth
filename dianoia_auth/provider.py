@@ -167,6 +167,13 @@ class AuthProvider:
         stored = json.loads(row[0]).get("client_secret") or ""
         return bool(stored) and secrets.compare_digest(stored.encode(), secret.encode())
 
+    def application(self, client_id: str, secret: str) -> bool:
+        """A confidential client, whose secret this is: an application, not a browser app or a self-registration."""
+        found = self.client(client_id)
+        stored = (found.client_secret or "") if found is not None else ""
+        return (bool(stored) and found.token_endpoint_auth_method != "none"
+                and secrets.compare_digest(stored.encode(), secret.encode()))
+
     def browser_origins(self) -> set[str]:
         """The origins of public clients' redirects: the browser apps that read /me."""
         with connect() as db:
