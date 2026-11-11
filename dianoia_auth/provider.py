@@ -23,6 +23,13 @@ claude.ai's connector to it), dianoia through Roxana, The Floor.
   grant can: `noesis:keep` (The Floor, keeping libraries at noesis) and
   `thefloor:members` (noesis, asking The Floor who belongs). Their `sub` is
   the client id.
+- **An application may vouch for its person** (the `VOUCHED` grant, since
+  2026-11-11), where the operator has let it (scripts/add_client.py
+  `--vouches`): with its id and secret and an address it has verified itself,
+  it is granted that person's scopes as a sign-in here would grant them, with
+  no page — The Floor connecting the library of somebody who signed in to it
+  before it signed people in here. The account is made as a first sign-in
+  makes it, and the consent is kept, so /account lists it and can end it.
 - **Access tokens are JWTs** (tokens.py); refresh tokens are opaque, kept as
   hashes in auth.db, rotated on every use, and refused once the account is
   disabled.
@@ -63,6 +70,8 @@ NOESIS_API = "noesis:api"
 PERSON_SCOPES = (IDENTITY, NOESIS_READ, NOESIS_IMPORT, NOESIS_API)
 APPLICATION_SCOPES = ("noesis:keep", "thefloor:members")
 REGISTERED_SCOPE = NOESIS_READ
+# The grant by which an application vouches for its person's address (`/token`).
+VOUCHED = "urn:rvanegas:params:oauth:grant-type:vouched"
 
 # OpenID Connect's `prompt` (`login`, `consent`, `none`), which the SDK's
 # /authorize does not pass on: server.py reads it from the request.
@@ -348,6 +357,23 @@ class AuthProvider:
             return None
         access, ttl = tokens.issue(client.client_id, client.client_id, scopes)
         return OAuthToken(access_token=access, expires_in=ttl, scope=" ".join(scopes))
+
+    def vouched_token(self, client: OAuthClientInformationFull, email: str,
+                      asked: list[str] | None) -> OAuthToken | str:
+        """A person's grant on an application's word for their address (VOUCHED), or
+        the OAuth error why not. Only for a client the operator let vouch."""
+        address = accounts.normalize_email(email)
+        if address is None:
+            return "invalid_request"
+        allowed = [s for s in scopes_of(client) if s in PERSON_SCOPES]
+        scopes = [s for s in asked if s in allowed] if asked else allowed
+        if not scopes or (asked and len(scopes) != len(asked)):
+            return "invalid_scope"
+        found = accounts.create_account(address)
+        if found.disabled:
+            return "invalid_grant"
+        sessions.grant(found.user, client.client_id, scopes)
+        return self._issue(client.client_id, found.user, scopes, None)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         claims = tokens.verify(token)

@@ -26,7 +26,11 @@ Read this before changing one, rotating one, or adding one.
   client's (The Floor's `NOESIS_CLIENT_SECRET`, noesis's
   `NOESIS_AUTH_CLIENT_SECRET`, claude.ai's own): kept in the clear, since the
   SDK compares them. A copy of `auth.db` lets somebody pose as any registered
-  client; refresh tokens there are hashes and reach nothing.
+  client; refresh tokens there are hashes and reach nothing. **A client let
+  vouch** (`--vouches`; The Floor alone, since 2026-11-11) is granted any
+  person's scopes on its own word, so its secret, or a copy of `auth.db`, is
+  as good as signing in as anybody to what those scopes reach — and, with
+  `/handoff`, signing a browser in as anybody here.
 - **Sessions** — the `__Host-session` cookie in each signed-in browser, kept
   in `auth.db` as a hash. A stolen cookie signs its thief in to every client,
   as that person, until it lapses (thirty days from last use) or the person

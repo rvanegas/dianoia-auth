@@ -5,7 +5,8 @@
 - The OAuth server, by the MCP SDK (`create_auth_routes`): metadata at
   /.well-known/oauth-authorization-server, /authorize, /token, /register,
   /revoke; and /token also takes `client_credentials` (provider.py, an
-  application's own token), which the SDK does not.
+  application's own token) and `VOUCHED` (a person's grant on an
+  application's word for their address), which the SDK does not.
 - `/.well-known/jwks.json`: the keys access tokens are signed with
   (tokens.py), for resource servers to check them by.
 - `/login`: the sign-in that /authorize sends people to: by emailed code,
@@ -58,7 +59,7 @@ from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
 from dianoia_auth import accounts, departures, handoff, names, passkeys, sessions, tokens
-from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, provider, what_it_asks
+from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, VOUCHED, provider, what_it_asks
 from dianoia_auth.store import sha
 
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -820,7 +821,7 @@ told. Your noesis libraries can be restored for thirty days by asking.</p>"""))
 # ---------------------------------------------------------------------------
 
 def _with_client_credentials(token_app):
-    """The SDK's /token, and before it the client_credentials grant it does not know."""
+    """The SDK's /token, and before it the grants it does not know: client_credentials, and VOUCHED."""
     authenticator = ClientAuthenticator(provider)
 
     async def asgi(scope, receive, send):
@@ -837,7 +838,8 @@ def _with_client_credentials(token_app):
             return {"type": "http.request", "body": body, "more_body": False}
 
         form = {k: v[0] for k, v in parse_qs(body.decode("utf-8", "replace")).items()}
-        if form.get("grant_type") != "client_credentials":
+        grant = form.get("grant_type")
+        if grant not in ("client_credentials", VOUCHED):
             return await token_app(scope, replay, send)
         headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
         try:
@@ -846,12 +848,16 @@ def _with_client_credentials(token_app):
             response = JSONResponse({"error": "invalid_client", "error_description": exc.message},
                                     status_code=401, headers=headers)
             return await response(scope, receive, send)
-        if "client_credentials" not in client.grant_types or not client.client_secret:
+        if grant not in client.grant_types or not client.client_secret:
             response = JSONResponse({"error": "unauthorized_client"}, status_code=400, headers=headers)
             return await response(scope, receive, send)
-        token = provider.application_token(client, form["scope"].split() if form.get("scope") else None)
-        if token is None:
-            response = JSONResponse({"error": "invalid_scope"}, status_code=400, headers=headers)
+        asked = form["scope"].split() if form.get("scope") else None
+        if grant == VOUCHED:
+            token = await asyncio.to_thread(provider.vouched_token, client, form.get("email", ""), asked)
+        else:
+            token = provider.application_token(client, asked) or "invalid_scope"
+        if isinstance(token, str):
+            response = JSONResponse({"error": token}, status_code=400, headers=headers)
         else:
             response = JSONResponse(token.model_dump(exclude_none=True), headers=headers)
         return await response(scope, receive, send)

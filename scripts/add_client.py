@@ -8,11 +8,15 @@ once, as `KEY=value` lines, for the application's own configuration.
 
     docker compose run --rm -T dianoia-auth python scripts/add_client.py thefloor --name "The Floor" \\
         --redirect https://thefloor.rvanegas.co/noesis/callback --scope "noesis:read noesis:import" \\
-        --credentials noesis:keep --keeps-names
+        --credentials noesis:keep --keeps-names --vouches
 
 - `--scope`: what a person's grant to it may carry (provider.PERSON_SCOPES).
 - `--credentials`: what its own tokens may carry (provider.APPLICATION_SCOPES),
   by the client_credentials grant; needs a secret.
+- `--vouches`: it may be granted a person's scopes on its own word for their
+  address (provider.VOUCHED), with no sign-in page; needs a secret. Whoever
+  holds the secret then reaches every account those scopes reach, so only an
+  application that verifies addresses itself.
 - `--keeps-names`: it calls the register of names (/names) with its id and secret.
 - `--public`: a browser app with no server of its own (Roxana, noesis's web
   client): PKCE and no secret, so only its id is printed; it may name several
@@ -35,7 +39,7 @@ from urllib.parse import urlparse
 
 from mcp.shared.auth import OAuthClientInformationFull
 
-from dianoia_auth.provider import APPLICATION_SCOPES, PERSON_SCOPES, provider
+from dianoia_auth.provider import APPLICATION_SCOPES, PERSON_SCOPES, VOUCHED, provider
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scope", default="", help="space-separated: what a person's grant may carry")
     parser.add_argument("--credentials", default="", help="space-separated: what its own tokens may carry")
     parser.add_argument("--keeps-names", action="store_true", help="it calls /names")
+    parser.add_argument("--vouches", action="store_true", help="it may vouch for its person's address")
     parser.add_argument("--public", action="store_true", help="no secret: a browser app")
     parser.add_argument("--prefix", default="AUTH", help="the printed lines' prefix: <PREFIX>_CLIENT_ID")
     args = parser.parse_args(argv)
@@ -56,8 +61,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"✗ not a client id: {args.client_id!r}")
     if bad := [s for s in person if s not in PERSON_SCOPES] + [s for s in own if s not in APPLICATION_SCOPES]:
         raise SystemExit(f"✗ not a scope it may have: {' '.join(bad)}")
-    if args.public and (own or args.keeps_names):
-        raise SystemExit("✗ a public client has no secret, so no tokens or names of its own")
+    if args.public and (own or args.keeps_names or args.vouches):
+        raise SystemExit("✗ a public client has no secret, so no tokens, names or vouching of its own")
+    if args.vouches and not person:
+        raise SystemExit("✗ vouching grants a person's scopes: name them with --scope")
     if bool(args.redirect) == args.no_redirect:
         raise SystemExit("✗ name its redirects, or say --no-redirect")
     if args.no_redirect and person:
@@ -71,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"✗ the redirect must be an https URL: {uri!r}")
     secret = None if args.public else secrets.token_urlsafe(32)
     grants = (["authorization_code", "refresh_token"] if args.redirect else []) + \
-        (["client_credentials"] if own else [])
+        (["client_credentials"] if own else []) + ([VOUCHED] if args.vouches else [])
     client = OAuthClientInformationFull(
         client_id=args.client_id,
         client_secret=secret,
