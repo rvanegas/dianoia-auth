@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS display_names (
     name TEXT NOT NULL,
     set_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS unlimited (
+    user TEXT PRIMARY KEY,
+    set_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS consents (
     user TEXT NOT NULL,
     client_id TEXT NOT NULL,

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""The operator's view of the accounts: list them, link or hold a name, disable or enable one, and deletions owed.
+"""The operator's view of the accounts: list them, link or hold a name, disable or enable one, mark one unlimited, and deletions owed.
 
     docker compose run --rm -T dianoia-auth python scripts/accounts.py list
     docker compose run --rm -T dianoia-auth python scripts/accounts.py link ann@example.com ann
     docker compose run --rm -T dianoia-auth python scripts/accounts.py hold rodvandur "noesis operator user"
     docker compose run --rm -T dianoia-auth python scripts/accounts.py disable ann
     docker compose run --rm -T dianoia-auth python scripts/accounts.py departures [--tell]
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py unlimited ann bob
+    docker compose run --rm -T dianoia-auth python scripts/accounts.py limited ann
 
 Disabling refuses the account's refresh tokens at once and its access tokens
-within their quarter hour (tokens.py). What an account may spend at noesis is
-noesis's (its scripts/accounts.py). `departures` lists the projects not yet
+within their quarter hour (tokens.py). `unlimited` marks a user name, an
+account's or a reservation's, unlimited in every application that asks
+(`GET /unlimited`: noesis and The Floor, each within a minute); `limited`
+takes the mark away. What else an account may spend at noesis is noesis's
+(its scripts/accounts.py). `departures` lists the projects not yet
 told of a person's deletion (departures.py), and `--tell` tries them now.
 """
 
@@ -33,13 +38,24 @@ def main(argv: list[str] | None = None) -> int:
     hold.add_argument("why")
     for name in ("disable", "enable"):
         sub.add_parser(name).add_argument("user")
+    for name in ("unlimited", "limited"):
+        sub.add_parser(name, help=f"mark user names {name} in every application").add_argument("users", nargs="+")
     owed = sub.add_parser("departures", help="deletions a project has not yet taken")
     owed.add_argument("--tell", action="store_true", help="try them now")
     args = parser.parse_args(argv)
     if args.command == "list":
+        unlimited = set(accounts.unlimited_users())
         for found in accounts.accounts():
             created = time.strftime("%Y-%m-%d", time.gmtime(found.created_at))
-            print(f"{found.user:<24} {found.email:<36} {created}{'  disabled' if found.disabled else ''}")
+            marks = ("  unlimited" if found.user in unlimited else "") + ("  disabled" if found.disabled else "")
+            print(f"{found.user:<24} {found.email:<36} {created}{marks}")
+    elif args.command in ("unlimited", "limited"):
+        for user in args.users:
+            try:
+                accounts.set_unlimited(user, args.command == "unlimited")
+            except ValueError as exc:
+                raise SystemExit(f"✗ {exc}") from None
+            print(f"{user.lower()} {args.command}")
     elif args.command == "link":
         found = accounts.link(args.email, args.user)
         print(f"{found.user} is {found.email}")

@@ -34,6 +34,9 @@
   (`PUT /names/display`, The Floor's pair); read in `/me`, in a person's
   token as `name`, and by user name at `GET /names/display` with any token
   auth signed. The browser routes answer CORS to public clients' origins.
+- `GET /unlimited` (since 2026-11-22): the user names the operator made
+  unlimited (scripts/accounts.py), one mark for every application, for an
+  application's own token alone: noesis and The Floor each ask it.
 """
 
 from __future__ import annotations
@@ -59,7 +62,7 @@ from pydantic import AnyHttpUrl, BaseModel
 from starlette.requests import Request as StarletteRequest
 
 from dianoia_auth import accounts, departures, handoff, names, passkeys, sessions, tokens
-from dianoia_auth.provider import PROMPT, REGISTERED_SCOPE, VOUCHED, provider, what_it_asks
+from dianoia_auth.provider import APPLICATION_SCOPES, PROMPT, REGISTERED_SCOPE, VOUCHED, provider, what_it_asks
 from dianoia_auth.store import sha
 
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -158,6 +161,21 @@ def get_display_names(user: list[str] = Query(default=[]), caller: str = Depends
     if len(user) > MAX_LOOKUP:
         raise HTTPException(400, f"at most {MAX_LOOKUP} names at a time")
     return {"names": accounts.display_names(list(dict.fromkeys(u.lower() for u in user)))}
+
+
+async def application(claims: dict = Depends(bearer)) -> str:
+    """An application's own token (client_credentials): its subject is its client id
+    and it carries application scopes alone, which no person's token does."""
+    scopes = set(claims["scope"].split())
+    if claims["sub"] != claims["client_id"] or not scopes or not scopes <= set(APPLICATION_SCOPES):
+        raise HTTPException(403, "an application's own token is required")
+    return claims["client_id"]
+
+
+@app.get("/unlimited")
+def get_unlimited(caller: str = Depends(application)) -> dict:
+    """Who is unlimited in every application: a short list, which each keeps a minute."""
+    return {"users": accounts.unlimited_users()}
 
 
 _ME_CORS = {"Access-Control-Allow-Methods": "GET, PUT, OPTIONS",

@@ -3,9 +3,11 @@
 Sign-up is open: the first sign-in with an address makes its account, under
 the name reserved for it (names.py) or one derived from the address. What an
 account may do in each application is that application's: noesis keeps its
-plans and allowances, The Floor its own settings. Here an account is a user
-name, an address, whether it is disabled, and the display name it is shown
-by in every application (since 2026-11-09); a disabled account's refresh
+allowances, The Floor its own settings. Here an account is a user name, an
+address, whether it is disabled, the display name it is shown by in every
+application (since 2026-11-09), and whether it is unlimited in every
+application (since 2026-11-22: `unlimited`, which noesis and The Floor read
+here, the mark each kept of its own before); a disabled account's refresh
 tokens and sessions stop working at once, and its access tokens within their
 quarter hour (tokens.py). A person deletes their own account (`delete`, from
 /account), and each project is told (departures.py).
@@ -166,7 +168,8 @@ def delete(user: str) -> None:
         if found is None:
             raise ValueError(f"no account {user!r}")
         db.execute("DELETE FROM reservations WHERE user = ? OR email = ?", (user, found[0]))
-        for table in ("accounts", "refresh", "sessions", "passkeys", "consents", "display_names"):
+        for table in ("accounts", "refresh", "sessions", "passkeys", "consents", "display_names",
+                      "unlimited"):
             db.execute(f"DELETE FROM {table} WHERE user = ?", (user,))
         db.execute("INSERT INTO held (user, why) VALUES (?, ?) ON CONFLICT (user) DO UPDATE SET why = excluded.why",
                    (user, f"deleted by its person, {time.strftime('%Y-%m-%d', time.gmtime(now))}"))
@@ -243,3 +246,23 @@ def set_display_name(user: str, value: str) -> str | None:
         else:
             db.execute("DELETE FROM display_names WHERE user = ?", (user,))
     return name or None
+
+
+def unlimited_users() -> list[str]:
+    """The user names the operator made unlimited, in every application that asks."""
+    with connect() as db:
+        return [user for (user,) in db.execute("SELECT user FROM unlimited ORDER BY user")]
+
+
+def set_unlimited(user: str, on: bool) -> None:
+    """The operator's mark (scripts/accounts.py), by user name, so a reservation
+    The Floor holds may carry it before its person first signs in here."""
+    user = user.lower()
+    with transaction() as db:
+        if on:
+            if not any(db.execute(f"SELECT 1 FROM {table} WHERE user = ?", (user,)).fetchone()
+                       for table in ("accounts", "reservations")):
+                raise ValueError(f"{user} is not an account or a reservation")
+            db.execute("INSERT OR IGNORE INTO unlimited (user, set_at) VALUES (?, ?)", (user, time.time()))
+        else:
+            db.execute("DELETE FROM unlimited WHERE user = ?", (user,))

@@ -117,4 +117,5 @@ def rename_account(old: str, new: str) -> str:
         db.execute("UPDATE accounts SET user = ? WHERE user = ?", (new, old))
         db.execute("UPDATE refresh SET user = ? WHERE user = ?", (new, old))
         db.execute("UPDATE display_names SET user = ? WHERE user = ?", (new, old))
+        db.execute("UPDATE unlimited SET user = ? WHERE user = ?", (new, old))
     return new
