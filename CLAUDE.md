@@ -12,7 +12,7 @@ Shared conventions, hosting, and the APIs between this project and its siblings 
 
 ## Practices
 
-technosophia's (`~/src/technosophia`), through `WORKING.md` above. No compatibility code, but **every project is a client here**: a change to what a token says, a route, or a scope's meaning is a change to their contract, made with them, and recorded in rvanegas-site's *Calls between projects*.
+technosophia's (`~/src/technosophia`), through `WORKING.md` above. **Every project is a client here**: a change to what a token says, a route, or a scope's meaning is a change to their contract, made with them, and recorded in rvanegas-site's *Calls between projects*.
 
 `planning/` is laid out as technosophia's `PLANNING.md` says.
 
