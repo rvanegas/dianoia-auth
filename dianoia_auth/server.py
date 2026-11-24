@@ -1,4 +1,7 @@
-"""dianoia-auth's HTTP app, at auth.rvanegas.co: the OAuth routes, the sign-in page, /me, display names and the register of names.
+"""dianoia-auth's HTTP app, at auth.twohands.co: the OAuth routes, the sign-in page, /me, display names and the register of names.
+
+During the overlap it answers at auth.rvanegas.co too, as that issuer
+(tokens.py: the issuer is the host asked).
 
 - `GET /healthz`: open, the deployed commit (dianoia_auth/deployed.json, stamped by
   `ts deploy`).
@@ -79,6 +82,23 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="dianoia-auth", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+
+class _AnsweringAsHostAsked:
+    """Every request answered as the issuer its Host names (tokens.answering). COMPATIBILITY, see tokens.py."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+        host = dict(scope.get("headers") or []).get(b"host", b"").decode("latin-1")
+        with tokens.answering(host):
+            await self.inner(scope, receive, send)
+
+
+app.add_middleware(_AnsweringAsHostAsked)
 
 
 def _deployed() -> dict:
@@ -895,30 +915,50 @@ def _with_prompt(authorize_app):
     return asgi
 
 
-for route in create_auth_routes(
-    provider,
-    issuer_url=AnyHttpUrl(tokens.issuer()),
-    client_registration_options=ClientRegistrationOptions(
-        enabled=True, valid_scopes=[REGISTERED_SCOPE], default_scopes=[REGISTERED_SCOPE]),
-    revocation_options=RevocationOptions(enabled=True),
-):
+METADATA_PATH = "/.well-known/oauth-authorization-server"
+
+
+def _auth_routes(issuer: str):
+    return create_auth_routes(
+        provider,
+        issuer_url=AnyHttpUrl(issuer),
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True, valid_scopes=[REGISTERED_SCOPE], default_scopes=[REGISTERED_SCOPE]),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+
+
+# The SDK fixes the issuer in its metadata when the routes are made, so each
+# issuer has its own, and the metadata answered is the one the Host asked for.
+# COMPATIBILITY, see tokens.py: with one issuer this is the SDK's own route.
+_METADATA = {issuer: next(r.app for r in _auth_routes(issuer) if r.path == METADATA_PATH)
+             for issuer in tokens.issuers()}
+
+
+async def _metadata_as_asked(scope, receive, send):
+    await _METADATA.get(tokens.issuer(), _METADATA[tokens.primary()])(scope, receive, send)
+
+
+for route in _auth_routes(tokens.primary()):
     if route.path == "/token":
         route.app = _with_client_credentials(route.app)
     elif route.path == "/authorize":
         route.app = _with_prompt(route.app)
+    elif route.path == METADATA_PATH:
+        route.app = _metadata_as_asked
     app.router.routes.append(route)
 
 
 @app.get("/", include_in_schema=False)
 def root() -> Response:
-    return RedirectResponse("https://rvanegas.co/", status_code=302)
+    return RedirectResponse("https://twohands.co/", status_code=302)
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     import uvicorn
-    parser = argparse.ArgumentParser(prog="dianoia-auth", description="the sign-in for rvanegas.co's projects")
+    parser = argparse.ArgumentParser(prog="dianoia-auth", description="the sign-in for Two Hands' projects")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8002)
     args = parser.parse_args(argv)

@@ -29,7 +29,12 @@ with socket.socket() as _s:
     PORT = _s.getsockname()[1]
 URL = f"http://127.0.0.1:{PORT}"
 os.environ["AUTH_PUBLIC_URL"] = URL
-for _name in ("AUTH_SMTP_HOST", "AUTH_TURNSTILE_SECRET", "AUTH_TURNSTILE_SITE_KEY"):
+# A second issuer it answers as, the old name during a move (tokens.py), reached
+# at the same server by its Host header.
+ALSO_HOST = f"localhost:{PORT}"
+ALSO = f"http://{ALSO_HOST}"
+os.environ["AUTH_ALSO_URLS"] = ALSO
+for _name in ("AUTH_SMTP_HOST", "AUTH_TURNSTILE_SECRET", "AUTH_TURNSTILE_SITE_KEY", "AUTH_MAIL_FROM"):
     os.environ.pop(_name, None)
 
 # The codes the server mailed, by address: mail.send_code, replaced.

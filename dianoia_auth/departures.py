@@ -38,7 +38,8 @@ from dianoia_auth import tokens
 from dianoia_auth.store import connect
 
 AUTH = "dianoia-auth"
-PROJECTS = {"noesis": "https://noesis.rvanegas.co", "thefloor": "https://thefloor.rvanegas.co"}
+# The Floor keeps its old name until its own move (the move's step 6), when this follows.
+PROJECTS = {"noesis": "https://noesis.twohands.co", "thefloor": "https://thefloor.rvanegas.co"}
 RETRY_SECONDS = 60 * 60
 TIMEOUT_SECONDS = 15
 

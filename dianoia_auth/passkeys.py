@@ -3,7 +3,7 @@
 Decided 2026-11-08: emailed codes and passkeys, and no passwords. A passkey
 is a key pair the person's device makes for this site alone; only its public
 half is kept here, so nothing stored is worth stealing, and a lookalike site
-gets nothing, since the browser binds the key to `auth.rvanegas.co`.
+gets nothing, since the browser binds the key to `auth.twohands.co`.
 
 - **Added only by somebody signed in**: offered after a code sign-in on a
   device that has none (never before: a passkey is somebody who has proved
@@ -20,7 +20,10 @@ gets nothing, since the browser binds the key to `auth.rvanegas.co`.
 - **A disabled account's passkeys sign nobody in**; removing one on /account
   deletes it here, though the device keeps its now useless private half.
 
-RP ID is the issuer's host (`auth.rvanegas.co`), the origin the issuer.
+RP ID is the host of the issuer asked (`auth.twohands.co`), the origin that
+issuer. During the overlap a passkey made at `auth.rvanegas.co` signs in there
+alone, and one is made anew at `auth.twohands.co` (tokens.py); every passkey
+is listed on /account at either.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ from webauthn.helpers.structs import (
 from dianoia_auth import accounts, tokens
 from dianoia_auth.store import connect
 
-RP_NAME = "rvanegas.co"
+RP_NAME = "Two Hands"
 CHALLENGE_TTL = 5 * 60
 MAX_PER_USER = 20
 

@@ -7,7 +7,7 @@ other application is registered here. Its client id and secret are printed
 once, as `KEY=value` lines, for the application's own configuration.
 
     docker compose run --rm -T dianoia-auth python scripts/add_client.py thefloor --name "The Floor" \\
-        --redirect https://thefloor.rvanegas.co/noesis/callback --scope "noesis:read noesis:import" \\
+        --redirect https://thefloor.twohands.co/noesis/callback --scope "noesis:read noesis:import" \\
         --credentials noesis:keep --keeps-names --vouches
 
 - `--scope`: what a person's grant to it may carry (provider.PERSON_SCOPES).

@@ -1,7 +1,7 @@
 """Sessions and consents: signing in once, for every client (Phase 2, SSO).
 
 A **session** is a browser signed in here. Verifying an emailed code makes
-one, kept in a cookie on `auth.rvanegas.co` alone (`HttpOnly`, `Secure`,
+one, kept in a cookie on the auth host asked alone (`auth.twohands.co`; `HttpOnly`, `Secure`,
 `SameSite=Lax`) and in auth.db by its hash. While it lasts, a client's
 sign-in skips the code: The Floor, noesis, Roxana and claude.ai each send
 the person to /authorize, and the page they land on already knows them.

@@ -13,6 +13,16 @@ display name they are shown by, else their user name (since 2026-11-09).
 **They last ACCESS_TTL**: a
 resource server cannot ask whether the account was disabled since, so
 disabling one reaches it within that time, while refresh stops at once.
+
+**The issuer is the host asked** (the move to twohands.co, planned
+2026-11-23): AUTH_PUBLIC_URL is the issuer, and AUTH_ALSO_URLS
+(comma-separated) the others this server answers as. A request to one of them
+is answered as that issuer, in its tokens, its metadata, its passkeys' RP ID
+and its mail; anything else, and work outside a request, as AUTH_PUBLIC_URL.
+A token from any of them is good here. COMPATIBILITY for the overlap:
+AUTH_ALSO_URLS and `answering` go no sooner than two weeks after the commons
+cutover, when the old names become redirects (rvanegas-site's
+planning/task/move-everything-from-rvanegas-co-to-twohands-co.md, step 8).
 """
 
 from __future__ import annotations
@@ -20,8 +30,11 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -33,8 +46,44 @@ from dianoia_auth.store import data_dir, sha
 ACCESS_TTL = 15 * 60
 
 
-def issuer() -> str:
+_ASKED: ContextVar[str | None] = ContextVar("issuer_asked", default=None)
+
+
+def primary() -> str:
+    """The issuer this server is, AUTH_PUBLIC_URL."""
     return os.environ.get("AUTH_PUBLIC_URL", "http://127.0.0.1:8002").rstrip("/")
+
+
+def issuers() -> list[str]:
+    """Every issuer this server answers as: AUTH_PUBLIC_URL first, then AUTH_ALSO_URLS."""
+    also = [u.strip().rstrip("/") for u in os.environ.get("AUTH_ALSO_URLS", "").split(",") if u.strip()]
+    return [primary(), *(u for u in also if u != primary())]
+
+
+def issuer() -> str:
+    """The issuer this request asked for, else AUTH_PUBLIC_URL."""
+    return _ASKED.get() or primary()
+
+
+def for_host(host: str | None) -> str | None:
+    """The issuer a request's Host header names, if it is one of this server's."""
+    if not host:
+        return None
+    host = host.lower()
+    for url in issuers():
+        if urlparse(url).netloc.lower() == host:
+            return url
+    return None
+
+
+@contextmanager
+def answering(host: str | None):
+    """While a request is answered: issuer() is the one its Host names, or AUTH_PUBLIC_URL."""
+    token = _ASKED.set(for_host(host))
+    try:
+        yield
+    finally:
+        _ASKED.reset(token)
 
 
 def _key_path(name: str = "signing-key.pem") -> Path:
@@ -89,7 +138,7 @@ def issue(sub: str, client_id: str, scopes: list[str], resource: str | None = No
 
 
 def verify(token: str) -> dict | None:
-    """Its claims, if this server signed it and it has not expired; any audience."""
+    """Its claims, if this server signed it, as any of its issuers, and it has not expired; any audience."""
     try:
         kid = jwt.get_unverified_header(token).get("kid")
     except jwt.PyJWTError:
@@ -97,7 +146,7 @@ def verify(token: str) -> dict | None:
     for key in (_key(), _key("signing-key.old.pem", make=False)):
         if key is not None and _kid(key) == kid:
             try:
-                return jwt.decode(token, key.public_key(), algorithms=["EdDSA"], issuer=issuer(),
+                return jwt.decode(token, key.public_key(), algorithms=["EdDSA"], issuer=issuers(),
                                   options={"verify_aud": False})
             except jwt.PyJWTError:
                 return None
