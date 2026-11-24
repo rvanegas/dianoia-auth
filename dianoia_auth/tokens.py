@@ -20,8 +20,8 @@ disabling one reaches it within that time, while refresh stops at once.
 is answered as that issuer, in its tokens, its metadata, its passkeys' RP ID
 and its mail; anything else, and work outside a request, as AUTH_PUBLIC_URL.
 A token from any of them is good here. COMPATIBILITY for the overlap:
-AUTH_ALSO_URLS and `answering` go no sooner than two weeks after the commons
-cutover, when the old names become redirects (rvanegas-site's
+AUTH_ALSO_URLS and `answering` go no sooner than 2027-01-23, two months
+after the commons cutover, when the old names become redirects (rvanegas-site's
 planning/task/move-everything-from-rvanegas-co-to-twohands-co.md, step 8).
 """
 
